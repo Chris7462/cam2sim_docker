@@ -10,7 +10,6 @@ import numpy as np
 from PIL import Image
 import math
 from utils.save_data import get_dataset_data, get_map_data
-# from create_vehicle_data_from_centroids import odom_xy_to_latlon  # se è in un file diverso, dimmelo e te lo sistemo
 from utils.config import VERTEX_DISTANCE, MAX_ROAD_LENGTH, WALL_HEIGHT, EXTRA_WIDTH, ROTATION_DEGREES, CAR_SPACING, \
     FORWARDS_PARKING_PROBABILITY
 
@@ -535,7 +534,6 @@ def get_filtered_vehicle_blueprints(world):
     blueprint_library = world.get_blueprint_library()
     all_vehicles = blueprint_library.filter('vehicle.*')
     
-    # The comprehensive list from Script 1
     forbidden_keywords = [
         "mustang", "police", "impala", "carlacola", "cybertruck", "t2", "sprinter", 
         "firetruck", "ambulance", "bus", "truck", "van", "bingle", "microlino", 
