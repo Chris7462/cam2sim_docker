@@ -2,40 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-Compute similarity transform from UTM coordinates to NERFSTUDIO coordinate system.
+4C_utm_yaw_to_nerfstudio.py
 
-IMPORTANT: This is different from raw COLMAP coordinates!
+Compute similarity transform (UTM → Nerfstudio) from a trained Gaussian Splatting
+model, including position alignment (Umeyama) and yaw offset.
 
-Nerfstudio applies internal transforms to COLMAP data:
-- Centering (moves centroid to origin)
-- Scaling (normalizes scene size)
-- Axis reordering (may swap/flip axes)
+Reads from (CLI args):
+    --gs_config <path>/config.yml
+    --utm_file <path>/frame_positions.txt
+    --data_root <path>
 
-So we need to compute the transform to nerfstudio's FINAL coordinate system,
-not the raw COLMAP positions from images.bin.
+Writes to (CLI args):
+    --output utm_to_nerfstudio_transform.json
 
-This script:
-1. Loads the TRAINED nerfstudio model
-2. Extracts the camera positions AND orientations that nerfstudio actually uses
-3. Matches them with UTM positions + yaw by frame number
-4. Computes Umeyama similarity transform: P_nerfstudio = s * R @ P_utm + t
-5. Computes yaw offset directly from matched orientations
-6. Saves the transform for use in inference
-
-Usage:
-    python 3v-utm_to_nerfstudio.py \
-        --gs_config path/to/outputs/.../config.yml \
-        --utm_file path/to/frame_positions.txt \
-        --data_root path/to/dataset \
-        --output utm_to_nerfstudio_transform.json
-
-Supported UTM file formats (auto-detected by number of columns):
-
-    5+ cols:  FrameID, Timestamp_Sec, Odom_X, Odom_Y, Odom_Yaw, ImageFile
-    11 cols:  FrameID, Timestamp_Sec, Odom_X, Odom_Y, Odom_Z,
-              Qx, Qy, Qz, Qw, Odom_Yaw, ImageFile
-
-In both cases, Odom_X / Odom_Y are interpreted as UTM Easting / Northing.
 """
 
 import os

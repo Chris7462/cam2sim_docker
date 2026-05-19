@@ -4,25 +4,17 @@
 """
 4D_fix_paths.py
 
-After unzipping data.zip on a new machine, rewrite the absolute paths
-embedded by Nerfstudio inside every splatfacto config.yml so they match
-the current project root.
+Rewrite absolute paths embedded by Nerfstudio inside splatfacto config.yml files.
 
-Nerfstudio serializes paths as pathlib.PosixPath objects, distributed
-across multiple YAML lines. This script:
-  1. Scans every config.yml under
-        data/data_for_gaussian_splatting/<BAG>/outputs/splatfacto_split_*/splatfacto/<ts>/
-  2. Finds every PosixPath sequence whose first component is "/" (absolute)
-  3. Rewrites the leading components up to and including ".../<project_root>/"
-     with the components of the current project root
-  4. Leaves untouched any PosixPath that is relative (e.g. colmap_path,
-     images_path, relative_log_dir)
+Reads from (project root):
+    data/data_for_gaussian_splatting/<BAG>/outputs/splatfacto_split_*/splatfacto/*/config.yml
 
-Idempotent: running it twice does nothing on the second run.
+Writes to (project root):
+    same config.yml files, updated in place (originals saved as <config>.yml.bak)
 
-Usage (from project root):
-    python 4_gaussian_splatting_preparation/4D_fix_paths.py
-    python 4_gaussian_splatting_preparation/4D_fix_paths.py --dry_run
+CLI flags:
+    --dry_run             print what would change without writing
+    --project_root <path> override project root used for the rewrite
 """
 
 import argparse
