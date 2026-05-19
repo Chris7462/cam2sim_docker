@@ -26,15 +26,9 @@ data/results/ for existing splatfacto_run<N> directories and picks the next
 free N (e.g. if run1 and run2 exist, the new run becomes splatfacto_run3).
 You can override with --output_dir or --run_id.
 
-Workflow:
-  1. Start CARLA server.
-  2. Run prepare_carla_world.py once (loads xodr, spawns hero + parked cars).
-  3. Start DAVE-2 server (separate `dave_2` conda env, port hardcoded in
-     utils/dave2_connection.py).
-  4. Run THIS script. It re-uses the existing hero vehicle in CARLA.
 
 Phases:
-  PHASE 1: 4-panel calibration GUI (CARLA, GS free cam, original training image,
+  PHASE 1: Optional 4-panel calibration GUI (CARLA, GS free cam, original training image,
            GS rendered from training pose). Per split.
   PHASE 2: DAVE-2 closed-loop drive. GS render -> DAVE-2 -> steer -> ackermann.
            Hero is teleported to first training camera with the proper
