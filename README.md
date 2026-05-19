@@ -4534,26 +4534,36 @@ Useful CLI arguments:
 
 ### 6UTIL_plot_all_trajectories.py
 
-Plots all real-world and simulated trajectories against the scenario segment on an OpenStreetMap basemap, with one subplot per weather condition. Also prints a LaTeX-formatted table with per-condition completion statistics.
+Plots all real-world and simulated drive trajectories against the scenario segment on an OpenStreetMap basemap, and prints a LaTeX-formatted summary table with completion statistics for real vs simulated runs.
 
-This script is **a visualization utility**, not a metric script: it does not write any file, it only opens an interactive matplotlib window and prints LaTeX to stdout. Use it to visually inspect the results of `6C` or to debug a new dataset.
+This script is **a visualization utility**, not a metric script: it does not write any file, it only opens an interactive matplotlib window and prints LaTeX to stdout. Use it to visually inspect the simulated runs against the real-world reference and to generate the system-level evaluation table.
 
 What the script does:
 
-1. Loads the scenario segment and reference path from `--segment`.
-2. Loads every real-world trajectory from `--rw_dir` (legacy `_trajectory.txt` filename format with embedded condition prefix, e.g. `cloudy1_trajectory.txt`).
-3. Loads every simulated trajectory from each directory passed via `--sim_dirs label=path`, matching several filename patterns (`only_carla_<cond>_map_run<N>_trajectory.json`, `<cond>_<method>_run<N>_trajectory.json`, `<cond>_run<N>_trajectory.json`).
+1. Loads the scenario segment and reference path (in CARLA coordinates) from `data/data_for_validation/real_world_trajectories/scenario_segment.json`.
+2. Loads every real-world trajectory `trajectory<N>.csv` from `data/data_for_validation/real_world_trajectories/`. The CSV is expected to have header `timestamp,x,y,z,yaw`, where `x,y` are UTM coordinates (EPSG:25832).
+3. Loads every simulated trajectory `splatfacto_run<N>_trajectory.json` from `data/data_for_validation/GS_trajectories/`. These are produced by `6A_copy_data_for_validation.py` starting from `data/results/splatfacto_run<N>/trajectory.json`.
 4. Projects each trajectory onto the reference path to compute its completion percentage with respect to the scenario segment.
-5. Plots one subplot per weather condition (sunny, cloudy, snowy) on an OSM basemap, color-coded by method, with start markers, end markers, and a green/red bar for the segment start/end.
-6. Prints a LaTeX `table` environment with fail rate, completion rate (avg–max–min), and a placeholder failure-type breakdown per condition.
+5. Plots all runs on a single OSM basemap subplot: real-world runs in blue, simulated runs in orange, scenario segment as a thick translucent green band with green/red start/end markers.
+6. Prints a LaTeX `table` environment with fail rate and completion rate (avg–max–min) for both `Real` and `3DGS` domains.
 
-Default input:
+All paths are hardcoded relative to the project root, in line with the other scripts in `6_validation/`. No CLI arguments.
+
+Input layout:
 
 ```text
---map_xodr        data/processed_dataset/<bag_name>/maps/map.xodr
---segment         data/data_for_validation/real_world_trajectories/scenario_segment.json
---rw_dir          (directory with <condition><N>_trajectory.txt files)
---sim_dirs <label>=<path>  (one or more)
+data/
+├── processed_dataset/<bag_name>/maps/map.xodr
+└── data_for_validation/
+    ├── real_world_trajectories/
+    │   ├── scenario_segment.json
+    │   ├── trajectory1.csv
+    │   ├── trajectory2.csv
+    │   └── trajectory3.csv
+    └── GS_trajectories/
+        ├── splatfacto_run1_trajectory.json
+        ├── splatfacto_run2_trajectory.json
+        └── ...
 ```
 
 Output: an interactive matplotlib window and a LaTeX block on stdout. No files are written.
@@ -4562,23 +4572,18 @@ Run:
 
 ```bash
 conda activate data_extraction
-python 6_validation/6UTIL_plot_all_trajectories.py \
-    --map_xodr data/processed_dataset/reference_bag/maps/map.xodr \
-    --segment  data/data_for_validation/real_world_trajectories/scenario_segment.json \
-    --rw_dir   data/data_for_validation/real_world_trajectories \
-    --sim_dirs splatfacto=data/data_for_validation/GS_trajectories
+python 6_validation/6UTIL_plot_all_trajectories.py
 ```
 
-Useful CLI arguments:
+To tune behaviour, edit the constants at the top of the file:
 
-| Argument | Effect |
+| Constant | Effect |
 |---|---|
-| `--map_xodr <path>` | OpenDRIVE map (required) |
-| `--segment <path>` | `scenario_segment.json` (required) |
-| `--rw_dir <path>` | Directory with real-world trajectory files (required) |
-| `--sim_dirs <label>=<path> ...` | One or more sim directories (required) |
-| `--buffer <m>` | Map buffer in meters around the trajectories (default: `100`) |
-| `--fail_threshold <%>` | Completion percentage below which a run is considered failed (default: `95`) |
+| `BAG_NAME` | Bag name used to resolve the XODR path (default: `reference_bag`) |
+| `MAP_BUFFER_M` | Map buffer in meters around the trajectories (default: `100`) |
+| `FAIL_THRESHOLD_PCT` | Completion percentage below which a run is considered failed (default: `95`) |
+| `RW_COLOR`, `SIM_COLOR` | Plot colors for real-world and simulated runs |
+| `LINE_STYLES` | Line style cycle (`-`, `--`, `:`) used to distinguish run numbers |
 
 ---
 

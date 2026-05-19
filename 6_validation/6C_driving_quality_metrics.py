@@ -3,41 +3,22 @@
 """
 6D_driving_quality_metrics.py
 
-Drive quality metrics for successful runs:
-  1. Min-Frechet distance (sim run vs closest real-world run)
-  2. Out-of-corridor: % of sim points outside real-world envelope + mean excess
-  3. Steering jitter (std of d_steering / dt)
+Drive quality metrics for successful sim runs vs real-world runs:
+min-Frechet distance, out-of-corridor rate (+ mean excess), and
+steering jitter. All runs are trimmed to the scenario segment.
 
-All runs are trimmed to the scenario segment before comparison.
+Reads from (CLI args):
+    --map_xodr    scenario .xodr map
+    --segment     scenario_segment.json (precomputed; skip with --recompute_segment)
+    --rw_dir      directory with real-world trajectory<N>.csv
+                  and optional steering_cmd_<N>.txt / steering_<N>.txt
+    --sim_dirs    list of label=path entries (e.g. GS=/path)
+                  each path must contain <prefix>_run<N>_trajectory.json
 
-Expected file layout:
-    <rw_dir>/
-        trajectory<N>.csv              (UTM x,y + timestamp; one per real-world run)
-                                       Header: timestamp,x,y,z,yaw
-        steering_cmd_<N>.txt           (optional; DAVE-2 cmds with timestamps)
-        scenario_segment.json          (precomputed; or rebuilt via --recompute_segment)
-
-    <sim_dir>/
-        <prefix>_run<N>_trajectory.json   (sim runs; <prefix> becomes the "method")
-
-Usage (default: use precomputed segment):
-    python 6D_driving_quality_metrics.py \
-        --map_xodr data/processed_dataset/reference_bag/maps/map.xodr \
-        --segment data/data_for_validation/real_world_trajectories/scenario_segment.json \
-        --rw_dir data/data_for_validation/real_world_trajectories \
-        --sim_dirs GS=data/data_for_validation/GS_trajectories
-
-Usage (recompute segment from the real-world CSVs in --rw_dir, save it as
-<rw_dir>/scenario_segment.json, then run metrics on it):
-    python 6D_driving_quality_metrics.py \
-        --map_xodr data/processed_dataset/reference_bag/maps/map.xodr \
-        --rw_dir data/data_for_validation/real_world_trajectories \
-        --sim_dirs GS=data/data_for_validation/GS_trajectories \
-        --recompute_segment
-
-When --recompute_segment is passed, --segment is ignored (if provided) and the
-resulting scenario_segment.json is written to <rw_dir>/scenario_segment.json,
-overwriting any existing file there.
+Writes to:
+    <rw_dir>/drive_quality_results.json
+    <rw_dir>/scenario_segment.json  (only with --recompute_segment)
+    summary table printed to stdout
 """
 
 import os
