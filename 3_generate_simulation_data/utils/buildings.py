@@ -63,7 +63,6 @@ def get_buildings_object(osm_data):
                 buildings.append(coords)
                 building_tags.append(tags)
 
-    # Mittelpunkt berechnen
     all_lats = [lat for geb in buildings for lat, _ in geb]
     all_lons = [lon for geb in buildings for _, lon in geb]
     center_lat = sum(all_lats) / len(all_lats)
@@ -107,7 +106,7 @@ def get_building_rendering(scene, camera_pos=[0, -50, 20], look_dir=[0, 1, -0.4]
     camera = pyrender.PerspectiveCamera(yfov=np.radians(fov_deg))
     #camera = pyrender.IntrinsicsCamera(fx=491.6,fy=491.6,cx=256,cy=256,znear=0.1,zfar=1000)
     cam_node = scene.add(camera, pose=pose)
-    scene.camera_node = cam_node  # merken
+    scene.camera_node = cam_node  
 
     renderer = pyrender.OffscreenRenderer(*resolution)
     color, _ = renderer.render(scene)
@@ -117,7 +116,6 @@ def get_building_rendering(scene, camera_pos=[0, -50, 20], look_dir=[0, 1, -0.4]
     return image
 
 def look_at(camera_pos, target, up=np.array([0, 0, 1])):
-    """Erzeugt eine LookAt-Transformationsmatrix."""
     forward = target - camera_pos
     forward /= np.linalg.norm(forward)
 
@@ -132,21 +130,15 @@ def look_at(camera_pos, target, up=np.array([0, 0, 1])):
     return transform
 
 def render_bw_image(obj_path, camera_pos, look_dir, image_path="output_bw.png", resolution=(800, 600), fov_deg=60):
-    """
-    Rendert ein Schwarz-Weiß-Bild einer .obj-Datei aus gegebener Kameraposition und Richtung.
-    """
-    # 1. Mesh laden
     scene = get_building_mesh(obj_path)
     camera = pyrender.PerspectiveCamera(yfov=np.radians(fov_deg))
     #camera = pyrender.IntrinsicsCamera(fx=491.6,fy=491.6,cx=256,cy=256,znear=0.1,zfar=100000000)
 
-    # 2. Kamera definieren
     camera_pos = np.array(camera_pos)
     look_dir = np.array(look_dir)
     target = camera_pos + look_dir
     up = np.array([0, 0, 1])
 
-    # 3. View-Transform berechnen
     def look_at(cam_pos, target, up):
         forward = (target - cam_pos)
         forward /= np.linalg.norm(forward)
@@ -161,24 +153,12 @@ def render_bw_image(obj_path, camera_pos, look_dir, image_path="output_bw.png", 
     cam_pose = look_at(camera_pos, target, up)
     scene.add(camera, pose=cam_pose)
 
-    # 4. Renderer
     r = pyrender.OffscreenRenderer(*resolution)
     color, _ = r.render(scene)
     r.delete()
 
-    # 5. Graustufen speichern
     img = Image.fromarray(color).convert("L")
     img.save(image_path)
-    print(f"Schwarz-Weiß-Bild gespeichert unter: {image_path}")
+    print(f": {image_path}")
 
 
-#render_bw_image(
-#    obj_path="../maps/guerickestrae_alte_heide_munich_25_08_01",
-#    camera_pos=[00, -5000, -1800],
-#    look_dir=[1, 0.0, -2.5],
-#    image_path="export_bw.png"
-#)
-
-#scene = get_building_mesh("../maps/guerickestrae_alte_heide_munich_25_08_01")
-#image = get_building_rendering(scene, camera_pos=[50, -100, 20], look_dir=[0, 1, -0.4])
-#image.save("preview_image.png")

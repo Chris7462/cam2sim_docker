@@ -85,7 +85,6 @@ def generate_spawn_gdf(edges, offset=4.0, offset_left=6.0, offset_right=5.2, ove
                 override
         )
 
-        # Controllare se è consentito parcheggiare sulla destra
         right_allowed = (
                 park_tags["parking:right"] in park_accept or
                 park_tags["parking:lane:right"] in park_accept or

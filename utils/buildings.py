@@ -132,9 +132,7 @@ def look_at(camera_pos, target, up=np.array([0, 0, 1])):
     return transform
 
 def render_bw_image(obj_path, camera_pos, look_dir, image_path="output_bw.png", resolution=(800, 600), fov_deg=60):
-    """
-    Rendert ein Schwarz-Weiß-Bild einer .obj-Datei aus gegebener Kameraposition und Richtung.
-    """
+
     # 1. Mesh laden
     scene = get_building_mesh(obj_path)
     camera = pyrender.PerspectiveCamera(yfov=np.radians(fov_deg))
@@ -169,7 +167,7 @@ def render_bw_image(obj_path, camera_pos, look_dir, image_path="output_bw.png", 
     # 5. Graustufen speichern
     img = Image.fromarray(color).convert("L")
     img.save(image_path)
-    print(f" Schwarz-Weiß-Bild gespeichert unter: {image_path}")
+    print(f" {image_path}")
 
 
 #render_bw_image(
