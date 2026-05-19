@@ -1,3 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1B_lidar_with_odometry.py
+
+Extract synchronized LiDAR point clouds and odometry poses from a ROS bag.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        point_clouds/point_cloud_<N:06d>.bin (Velodyne XYZI scans)
+        lidar_positions.txt (per-frame UTM pose interpolated from /odom)
+"""
+
 import os
 import math
 import numpy as np

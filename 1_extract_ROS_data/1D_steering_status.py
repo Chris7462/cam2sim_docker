@@ -1,3 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1D_steering_status.py
+
+Extract vehicle steering values data from a ROS bag to a text file.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        steering_pct.txt (timestamp, steering value per row)
+"""
+
+
 import numpy as np
 from pathlib import Path
 from rosbags.highlevel import AnyReader

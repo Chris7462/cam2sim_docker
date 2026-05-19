@@ -1,3 +1,21 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1C_poses_and_trajectory.py
+
+Extract rear-axle odometry poses from a ROS bag to CSV files.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        odometry.csv (full odometry: timestamp, tx, ty, tz, qx, qy, qz, qw, yaw)
+        trajectory.csv (compact trajectory: timestamp, x, y, z, yaw)
+"""
+
+
 import os
 import math
 import csv

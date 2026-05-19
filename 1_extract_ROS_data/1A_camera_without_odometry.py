@@ -1,3 +1,19 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1A_camera_without_odometry.py
+
+Extract RGB frames from a ROS bag camera topic to PNG files.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        images/frame_<N:06d>.png (RGB frames from the camera topic)
+"""
+
 import os
 import cv2
 import numpy as np

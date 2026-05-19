@@ -1,3 +1,19 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1B_lidar_without_odometry.py
+
+Extract LiDAR point clouds from a ROS bag to binary files.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        point_clouds/point_cloud_<N:06d>.bin (Velodyne XYZI scans)
+"""
+
 import os
 import numpy as np
 from pathlib import Path

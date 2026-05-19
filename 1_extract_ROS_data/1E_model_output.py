@@ -1,7 +1,18 @@
-import numpy as np
-from pathlib import Path
-from rosbags.highlevel import AnyReader
-import os
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1E_model_output.py
+
+Extract driving model steering predictions from a ROS bag to a text file.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        steering_predictions.txt (timestamp, steering_target per row)
+"""
 
 
 import numpy as np

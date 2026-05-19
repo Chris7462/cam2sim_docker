@@ -1,3 +1,18 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1UTIL_print_bag_info.py
+
+Inspect a ROS bag: list all topics with type and message count, and the
+total recording time range.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+
+"""
+
 import numpy as np
 from pathlib import Path
 from rosbags.highlevel import AnyReader

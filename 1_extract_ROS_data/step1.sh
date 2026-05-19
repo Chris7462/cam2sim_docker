@@ -10,7 +10,7 @@ REFERENCE_BAG="data/raw_ros_data/reference_bag.bag"
 
 if [ ! -f "$REFERENCE_BAG" ]; then  
     echo "Downloading Reference Bag"
-    gdown 1ka4dqG83aprB6FWjd0W0mWxyPZHsRfj9 -O "$REFERENCE_BAG"
+    gdown 1ijhejhNO19jvrb3BUkEKRlxw-SkfZRhu -O "$REFERENCE_BAG"
 fi
 
 for SCRIPT in "${SCRIPTS[@]}"; do

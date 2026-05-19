@@ -1,3 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+1A_camera_with_odometry.py
+
+Extract synchronized RGB frames and rear-axle odometry poses from a ROS bag.
+
+Reads from (project root):
+    data/raw_ros_data/<BAG>.bag
+
+Writes to (project root):
+    data/raw_dataset/<BAG>/
+        images/frame_<N:06d>.png (RGB frames from the camera topic)
+        images_positions.txt (per-frame UTM pose interpolated from /odom)
+"""
+
 import os
 import math
 import numpy as np
@@ -132,14 +149,14 @@ print(f"\nProcessing Sync for {len(cam_data)} camera frames...")
 if len(cam_data) > 0:
     cam_timestamps = np.array([c['ts'] for c in cam_data])
 
-    # Interpola posizione (x, y, z)
+    # Interpolate position (x, y, z)
     cam_tx = np.interp(cam_timestamps, odom_t_all, odom_tx_all)
     cam_ty = np.interp(cam_timestamps, odom_t_all, odom_ty_all)
     cam_tz = np.interp(cam_timestamps, odom_t_all, odom_tz_all)
 
-    # Interpola quaternione componente-per-componente, poi rinormalizza
-    # (lineare + rinormalizzazione e' una buona approssimazione di slerp
-    # quando le pose adiacenti sono vicine, come nel nostro caso ~100Hz)
+    # Interpolate quaternion component-by-component, then renormalize.
+    # Linear interpolation + renormalization is a good approximation of slerp
+    # when adjacent poses are close, which is the case here (~100 Hz).
     cam_qx = np.interp(cam_timestamps, odom_t_all, odom_qx_all)
     cam_qy = np.interp(cam_timestamps, odom_t_all, odom_qy_all)
     cam_qz = np.interp(cam_timestamps, odom_t_all, odom_qz_all)
@@ -151,7 +168,7 @@ if len(cam_data) > 0:
     cam_qz /= q_norm
     cam_qw /= q_norm
 
-    # Yaw derivato dal quaternione interpolato (consistente con qx,qy,qz,qw)
+    # Yaw derived from the interpolated quaternion (consistent with qx, qy, qz, qw).
     cam_yaw = np.array([
         quat_to_yaw(qx, qy, qz, qw)
         for qx, qy, qz, qw in zip(cam_qx, cam_qy, cam_qz, cam_qw)
