@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-UNIFIED PARKED CAR DETECTION PIPELINE
+2A_camera_parked_cars_detection.py
 
-Combines:
-- FCOS3D for accurate 3D detection
-- SimpleWorldTracker for temporal tracking in world coordinates
-- Trajectory-based left/right and parallel/perpendicular classification
-- Two-stage clustering to reduce duplicates
-- 3D bounding box visualization overlays
+Parked car detection from RGB frames using FCOS3D + tracking + clustering.
 
-Input:
-- data/raw_dataset/<dataset_name>/images/
-- data/raw_dataset/<dataset_name>/images_positions.txt
+Reads from (project root):
+    data/raw_dataset/<BAG>/images/
+    data/raw_dataset/<BAG>/images_positions.txt
+    2_process_datasets/utils/fcos3d_config.py
+    2_process_datasets/utils/fcos3d.pth
+
+Writes to (project root):
+    data/processed_dataset/<BAG>/camera_detections/
+        camera_detections.json (clustered parked-car detections in world frame)
+        unified_clusters.txt (compact CSV: id, x, y, z, count, conf, orient, side)
+        unified_bbox_overlays/bbox_<N:06d>.png (per-frame 3D box overlays)
 """
-
 import os
 import shutil
 import json

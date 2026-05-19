@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+2C_create_map_from_coordinates_manual.py
+
+Generate OSM map data with hero_car position selected via GUI.
+
+Reads from (project root):
+    data/processed_dataset/<BAG>/maps/vehicle_data.json 
+
+Writes to (project root):
+    data/processed_dataset/<BAG>/maps/
+        map.osm (raw OpenStreetMap)
+        map.xodr (OpenDRIVE map)
+        buildings.obj (3D buildings extracted from OSM)
+        vehicle_data.json ( hero_car + spawn positions)
+"""
+
 import json
 import os
 import sys

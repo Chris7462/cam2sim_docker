@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 
+"""
+2F_extract_semantic_maps.py
+
+Extract reduced semantic segmentation maps (road, car, background) from RGB frames
+using SegFormer (Cityscapes).
+
+Reads from (project root):
+    data/raw_dataset/<BAG>/images/
+
+Writes to (project root):
+    data/processed_dataset/<BAG>/
+        semantic_maps/ 
+"""
+
 import os
 import glob
 from tqdm import tqdm

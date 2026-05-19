@@ -1,7 +1,23 @@
 #!/usr/bin/env python3
-
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+
+"""
+2C_create_map_from_coordinates_auto.py
+
+Generate OSM map data and vehicle metadata around the first trajectory pose.
+
+Reads from (project root):
+    data/raw_dataset/<BAG>/trajectory.csv
+
+Writes to (project root):
+    data/processed_dataset/<BAG>/maps/
+        map.osm (raw OpenStreetMap)
+        map.xodr (OpenDRIVE map)
+        buildings.obj (3D buildings extracted from OSM)
+        vehicle_data.json (placeholder hero_car + spawn positions)
+"""
+
 
 import json
 import os

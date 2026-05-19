@@ -2,21 +2,23 @@
 # -*- coding: utf-8 -*-
 
 """
-Prepare images and overlapping splits for Gaussian Splatting,
-WITH sky masks (thesis-faithful).
+2E_prepare_dataset_for_gaussian_splatting.py
 
-Differences vs the original prepare_gs_splits_thesis.py:
-  - Generates sky masks using SegFormer (nvidia/segformer-b1-finetuned-cityscapes-1024-1024)
-  - Saves them in _tmp_sky_masks_gs_<skip>/ and sky_masks_gs_split_N_<skip>/
-  - Convention (matches thesis):
-        255 (white) = valid pixel (keep during training/COLMAP)
-        0   (black) = masked-out pixel (= sky, ignore)
+Prepare cropped images and overlapping splits for Gaussian Splatting,
+with per-frame sky masks generated via SegFormer (Cityscapes).
 
-Everything else is IDENTICAL to the thesis-replicating script:
-  - FRAME_SKIP = 2
-  - NUM_SPLITS = 3
-  - OVERLAP_FRAMES = 100 (in original frame_id units)
-  - same hardcoded paths, same crop, same split partitioning logic
+Reads from (project root):
+    data/raw_dataset/<BAG>/images/
+    data/raw_dataset/<BAG>/images_positions.txt
+
+Writes to (project root):
+    data/data_for_gaussian_splatting/<BAG>/
+        _tmp_images_gs_1_of_<SKIP>/ (cropped frames, all subsampled)
+        _tmp_sky_masks_gs_1_of_<SKIP>/ (sky masks: 255=keep, 0=sky)
+        images_gs_split_<N>_1_of_<SKIP>/ (per-split cropped frames)
+        sky_masks_gs_split_<N>_1_of_<SKIP>/ (per-split sky masks)
+        frame_positions_split_<N>_1_of_<SKIP>.txt (per-split pose subset)
+        colmap/split_<N>/sparse/0/ (empty folders ready for COLMAP)
 """
 
 import os

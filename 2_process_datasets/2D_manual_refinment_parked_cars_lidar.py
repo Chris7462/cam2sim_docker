@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 
+"""
+2D_manual_refinment_parked_cars_lidar.py
+
+Interactive GUI to clean parked-car centroids over an OSM basemap
+(delete, rotate, switch side, move, insert).
+
+Reads from (project root):
+    data/raw_dataset/<BAG>/trajectory.csv
+    data/raw_dataset/<BAG>/shift.txt (optional)
+    data/processed_dataset/<BAG>/lidar_detections/unified_clusters.txt
+
+Writes to (project root):
+    data/processed_dataset/<BAG>/lidar_detections/
+        unified_clusters_filtered.txt (cleaned CSV: id, x, y, z, count, conf, orient, side)
+"""
+
 import os
 import sys
 import math

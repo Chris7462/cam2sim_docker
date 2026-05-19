@@ -1,3 +1,26 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+2B_lidar_parked_cars_detection.py
+
+Parked car detection from LiDAR point clouds using PointPillars + clustering.
+
+Reads from (project root):
+    data/raw_dataset/<BAG>/odometry.csv
+    data/raw_dataset/<BAG>/lidar_positions.txt
+    data/raw_dataset/<BAG>/point_clouds/
+    2_process_datasets/utils/my_pointpillars_config.py
+    2_process_datasets/utils/hv_pointpillars_secfpn_6x8_160e_kitti-3d-3class_*.pth
+
+Writes to (project root):
+    data/processed_dataset/<BAG>/lidar_detections/
+        lidar_detections.json (clustered parked-car detections in world frame)
+        unified_clusters.txt (compact CSV: id, x, y, z, count, conf, orient, side)
+        lidar_bboxes.txt (full bbox: id, x, y, z, l, w, h, yaw, orient, side)
+        screenshots/visualization_screenshot_<N:03d>.png
+"""
+
 import os
 import json
 import shutil

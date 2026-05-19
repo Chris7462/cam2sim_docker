@@ -1,40 +1,24 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-LiDAR Parked Car Detection with Interactive Bounding Box Refinement.
+2B_OPTIONAL_lidar_parked_cars_detection_with_refinement.py
 
-Features:
-- Detects parked cars using PointPillars
-- Reads LiDAR timestamps from lidar_positions.txt
-- Reads odometry from odometry.csv
-- Saves RAW detections before manual editing
-- Interactive tool to move/rotate/delete/insert bounding boxes
-- Saves REFINED ground truth after editing
+Parked car detection from LiDAR with interactive bounding-box refinement.
 
-Input:
-- data/raw_dataset/<dataset_name>/odometry.csv
-- data/raw_dataset/<dataset_name>/lidar_positions.txt
-- data/raw_dataset/<dataset_name>/point_clouds/*.bin
+Reads from (project root):
+    data/raw_dataset/<BAG>/odometry.csv
+    data/raw_dataset/<BAG>/lidar_positions.txt
+    data/raw_dataset/<BAG>/point_clouds/
+    2_process_datasets/utils/my_pointpillars_config.py
+    2_process_datasets/utils/hv_pointpillars_secfpn_6x8_160e_kitti-3d-3class_*.pth
 
-Output:
-- data/processed_dataset/<dataset_name>/lidar_refinement/detections_raw.json
-- data/processed_dataset/<dataset_name>/lidar_refinement/ground_truth_refined.json
-- data/processed_dataset/<dataset_name>/lidar_refinement/final_clusters.txt
-- data/processed_dataset/<dataset_name>/lidar_refinement/ground_truth_bboxes.txt
-- data/processed_dataset/<dataset_name>/lidar_refinement/screenshots/
-
-Controls in refinement mode:
-- LEFT/RIGHT: Select nearest box spatially in that direction
-- C: Select box closest to camera
-- W/S: Move selected box forward/backward
-- A/D: Move selected box left/right
-- Q/E: Rotate selected box
-- R/F: Move selected box up/down
-- X: Delete selected box
-- I: Insert new box at current selected box position
-- U: Update side/orientation for selected box
-- P: Save screenshot
-- SPACE: Confirm and save
-- ESC: Cancel without saving
+Writes to (project root):
+    data/processed_dataset/<BAG>/lidar_detections/
+        lidar_detections.json (refined parked-car detections in world frame)
+        unified_clusters.txt (compact CSV: id, x, y, z, count, conf, orient, side)
+        lidar_bboxes.txt (full bbox: id, x, y, z, l, w, h, yaw, orient, side)
+        screenshots/refinement_screenshot_<N:03d>.png
 """
 
 import os
