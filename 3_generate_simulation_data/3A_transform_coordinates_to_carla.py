@@ -2,30 +2,22 @@
 # -*- coding: utf-8 -*-
 
 """
-3A_transform_coordinates_yaw_to_carla.py
+3A_transform_coordinates_to_carla.py
 
-Generates CARLA trajectory JSON files using real odom yaw from images_positions.txt.
+Convert UTM trajectory + odom yaw into CARLA-frame trajectories.
 
-This version:
-  - Uses hardcoded BAG_NAME, no command-line parameters
-  - Reads the new images_positions.txt format:
-      FrameID, Timestamp_Sec, Odom_X, Odom_Y, Odom_Z,
-      Qx, Qy, Qz, Qw, Odom_Yaw, ImageFile
-  - Imports utils from the same folder where this script is located:
-      3_generate_simulation_data/utils/
-  - Reads the map from:
-      data/processed_dataset/<BAG_NAME>/maps
-  - Reads trajectory positions from:
-      data/raw_dataset/<BAG_NAME>/images_positions.txt
-  - Saves EVERYTHING for CARLA to:
-      data/data_for_carla/<BAG_NAME>
+Reads from (project root):
+    data/raw_dataset/<BAG>/images_positions.txt
+    data/processed_dataset/<BAG>/maps/map.xodr
+    data/processed_dataset/<BAG>/maps/vehicle_data.json (optional)
 
-Outputs in data/data_for_carla/<BAG_NAME>:
-  vehicle_data.json
-  trajectory_positions.json
-  trajectory_positions_rear.json
-  trajectory_positions_odom_yaw.json
-  trajectory_positions_rear_odom_yaw.json
+Writes to (project root):
+    data/data_for_carla/<BAG>/
+        vehicle_data.json 
+        trajectory_positions.json 
+        trajectory_positions_rear.json 
+        trajectory_positions_odom_yaw.json 
+        trajectory_positions_rear_odom_yaw.json 
 """
 
 import os

@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+3C_setup_carla.py
+
+Launch the CARLA simulator (CarlaUE4.sh) at low quality.
+
+Reads from (project root):
+    utils/config.py (CARLA_INSTALLATION_PATH)
+
+"""
+
 import os
 import sys
 import subprocess

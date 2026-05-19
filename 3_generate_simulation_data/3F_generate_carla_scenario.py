@@ -2,40 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Prepare CARLA world with hero car and parked cars.
+3F_generate_carla_scenario.py
 
-This script prepares the CARLA world for the replay script.
+Load the OpenDRIVE map in CARLA and spawn the hero + parked cars.
 
-It does:
-  - load the OpenDRIVE map
-  - spawn parked cars
-  - spawn the hero car at the first odom-yaw rear trajectory pose
-  - disable physics for all spawned actors
-  - leave the actors alive in CARLA
-  - disable synchronous mode
-  - exit
+Reads from (project root):
+    data/processed_dataset/<BAG>/maps/map.xodr
+    data/data_for_carla/<BAG>/vehicle_data.json
+    data/data_for_carla/<BAG>/trajectory_positions_rear_odom_yaw.json
+    data/data_for_carla/<BAG>/trajectory_positions_rear.json 
 
-Important:
-  This script should NOT keep running while the replay script runs.
-  The replay script should be the only script calling world.tick() during replay.
 
-Reads map from:
-
-    data/processed_dataset/<BAG_NAME>/maps/map.xodr
-
-Reads CARLA-ready vehicle data from:
-
-    data/data_for_carla/<BAG_NAME>/vehicle_data.json
-
-Reads hero trajectory start from:
-
-    data/data_for_carla/<BAG_NAME>/trajectory_positions_rear_odom_yaw.json
-
-Expected workflow:
-
-    1. Start CARLA server.
-    2. Run this script once.
-    3. Run the replay script.
 """
 
 import os

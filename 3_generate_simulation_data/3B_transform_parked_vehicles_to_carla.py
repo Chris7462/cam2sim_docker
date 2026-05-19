@@ -2,30 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-Create / overwrite spawn_positions in final CARLA vehicle_data.json.
+3B_transform_parked_vehicles_to_carla.py
 
-Reads map data from:
+Convert parked-car centroids into CARLA-frame spawn positions.
 
-    data/processed_dataset/<BAG_NAME>/maps
+Reads from (project root):
+    data/processed_dataset/<BAG>/lidar_detections/unified_clusters.txt
+    data/processed_dataset/<BAG>/maps/map.xodr
+    data/processed_dataset/<BAG>/maps/vehicle_data.json (optional)
+    data/data_for_carla/<BAG>/vehicle_data.json (optional, preserved if present)
 
-Reads centroid input from:
-
-    data/processed_dataset/<BAG_NAME>/lidar_detections/unified_clusters.txt
-
-Writes final vehicle data to:
-
-    data/data_for_carla/<BAG_NAME>/vehicle_data.json
-
-The centroid parser is flexible and ignores RGB/color columns.
-
-It requires at least:
-
-    cluster_id, x, y
-
-It then scans the remaining columns for:
-
-    orientation: parallel / perpendicular
-    side:        left / right
+Writes to (project root):
+    data/data_for_carla/<BAG>/
+        vehicle_data.json (spawn_positions overwritten, hero_car preserved)
 """
 
 import os
@@ -70,7 +59,6 @@ sys.path.insert(0, SCRIPT_DIR)
 # =======================
 
 # Change this to select another bag.
-# No command-line parameters are used.
 BAG_NAME = "reference_bag"
 
 
