@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-plot_all_trajectories.py
+6UTIL_plot_all_trajectories.py
 
-Plots ALL trajectories (real-world + simulated) against the scenario segment
-on an OSM background. Groups by condition (sunny/cloudy/snowy) in subplots.
-Generates LaTeX table with metrics at the end.
+Plots all real-world + simulated drive trajectories against the scenario
+segment on an OSM background, and prints a LaTeX completion-rate table.
 
-Usage:
-    python plot_all_trajectories.py \
-        --map_xodr maps/sunny_map/map.xodr \
-        --segment /media/davide/New\ Volume/RW_trajectories/scenario_segment.json \
-        --rw_dir /media/davide/New\ Volume/RW_trajectories \
-        --sim_dirs \
-            SD=/media/davide/New\ Volume/SD_trajectories \
-            splatfacto=/path/to/splatfacto_trajectories \
-            nerfacto=/path/to/nerfacto_trajectories \
-            only_carla=/path/to/Only_Carla_trajectories
+Reads from (project root):
+    data/processed_dataset/<BAG>/maps/map.xodr
+    data/data_for_validation/real_world_trajectories/scenario_segment.json
+    data/data_for_validation/real_world_trajectories/trajectory<N>.csv
+    data/data_for_validation/GS_trajectories/splatfacto_run<N>_trajectory.json
+
+Writes to:
+    interactive matplotlib figure
+    LaTeX table printed to stdout
 """
 
 import os
 import re
 import json
-import argparse
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import contextily as ctx
@@ -30,11 +28,44 @@ from pyproj import Transformer
 
 
 # =============================================================================
-# XODR PARSING
+#  PATH SETUP
+# =============================================================================
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+
+BAG_NAME = "reference_bag"
+
+MAP_XODR = os.path.join(
+    PROJECT_ROOT, "data", "processed_dataset", BAG_NAME, "maps", "map.xodr"
+)
+
+RW_DIR = os.path.join(
+    PROJECT_ROOT, "data", "data_for_validation", "real_world_trajectories"
+)
+SEGMENT_JSON = os.path.join(RW_DIR, "scenario_segment.json")
+
+SIM_DIR = os.path.join(
+    PROJECT_ROOT, "data", "data_for_validation", "GS_trajectories"
+)
+
+# Plot config
+MAP_BUFFER_M = 100
+FAIL_THRESHOLD_PCT = 95.0
+
+RW_COLOR = "#1E88E5"
+SIM_COLOR = "#FF9800"
+LINE_STYLES = ["-", "--", ":"]
+
+
+# =============================================================================
+#  XODR PARSING
 # =============================================================================
 
 def get_xodr_projection_params(xodr_data):
-    geo_match = re.search(r'<geoReference>\s*<!\[CDATA\[(.*?)\]\]>', xodr_data, re.DOTALL)
+    geo_match = re.search(
+        r'<geoReference>\s*<!\[CDATA\[(.*?)\]\]>', xodr_data, re.DOTALL
+    )
     geo_ref = geo_match.group(1).strip() if geo_match else "+proj=tmerc"
     offset_match = re.search(r'<offset\s+x="([^"]+)"\s+y="([^"]+)"', xodr_data)
     if offset_match:
@@ -45,7 +76,7 @@ def get_xodr_projection_params(xodr_data):
 
 
 # =============================================================================
-# COORDINATE CONVERSIONS
+#  COORDINATE CONVERSIONS
 # =============================================================================
 
 def setup_transforms(xodr_path):
@@ -59,7 +90,7 @@ def setup_transforms(xodr_path):
 
     tf_proj_to_wgs = Transformer.from_crs(proj_string, "EPSG:4326", always_xy=True)
     tf_wgs_to_proj = Transformer.from_crs("EPSG:4326", proj_string, always_xy=True)
-    tf_utm_to_wgs = Transformer.from_crs("EPSG:25832", "EPSG:4326", always_xy=True)
+    tf_utm_to_wgs  = Transformer.from_crs("EPSG:25832", "EPSG:4326", always_xy=True)
     tf_wgs_to_merc = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
     return tf_proj_to_wgs, tf_wgs_to_proj, tf_utm_to_wgs, tf_wgs_to_merc, xodr_offset
@@ -115,17 +146,18 @@ def utm_array_to_carla(uxs, uys, tf_utm_to_wgs, tf_wgs_to_proj, xodr_offset):
 
 
 # =============================================================================
-# PROJECTION ONTO REFERENCE PATH
+#  PROJECTION ONTO REFERENCE PATH
 # =============================================================================
 
 def project_onto_reference(traj_xs, traj_ys, ref_xs, ref_ys, ref_s):
-    """Project trajectory onto reference path → 1D progress (arc length)."""
+    """Project trajectory onto reference path -> 1D progress (arc length)."""
     progress = np.zeros(len(traj_xs))
     for i in range(len(traj_xs)):
-        dists = np.sqrt((ref_xs - traj_xs[i])**2 + (ref_ys - traj_ys[i])**2)
+        dists = np.sqrt((ref_xs - traj_xs[i]) ** 2 + (ref_ys - traj_ys[i]) ** 2)
         closest_idx = np.argmin(dists)
         progress[i] = ref_s[closest_idx]
-    # Enforce monotonicity
+
+    # Force monotonic increase so a quick backtrack doesn't lower completion.
     for i in range(1, len(progress)):
         if progress[i] < progress[i - 1]:
             progress[i] = progress[i - 1]
@@ -133,27 +165,31 @@ def project_onto_reference(traj_xs, traj_ys, ref_xs, ref_ys, ref_s):
 
 
 # =============================================================================
-# LOADERS
+#  LOADERS
 # =============================================================================
 
-def load_real_trajectory_utm(path):
+def load_real_trajectory_csv(path):
+    """Load real-world trajectory CSV (timestamp,x,y,z,yaw) -> (utm_x, utm_y)."""
     xs, ys = [], []
     with open(path, "r") as f:
+        header = f.readline()
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 4:
-                try:
-                    xs.append(float(parts[2]))
-                    ys.append(float(parts[3]))
-                except ValueError:
-                    continue
+            if len(parts) < 3:
+                continue
+            try:
+                xs.append(float(parts[1]))
+                ys.append(float(parts[2]))
+            except ValueError:
+                continue
     return np.array(xs), np.array(ys)
 
 
 def load_sim_trajectory(path):
+    """Load simulated trajectory JSON (list of dicts with x, y) -> (carla_x, carla_y)."""
     with open(path, "r") as f:
         data = json.load(f)
     xs = np.array([p["x"] for p in data])
@@ -162,160 +198,91 @@ def load_sim_trajectory(path):
 
 
 # =============================================================================
-# LATEX TABLE GENERATION
+#  LATEX TABLE
 # =============================================================================
 
-def generate_latex_table(completions_rw, completions_sim, conditions, fail_threshold=95.0):
+def generate_latex_table(completions_rw, completions_sim, fail_threshold):
     """
-    Generate LaTeX table with metrics.
-
-    completions_rw: dict (condition, run) → completion%
-    completions_sim: dict (method, condition, run) → completion%
-    conditions: list of condition names
+    Simple LaTeX table: Real vs Sim, single condition.
+    completions_rw: dict run -> completion %
+    completions_sim: dict run -> completion %
     """
 
-    # Map internal method names to display names
-    DOMAIN_MAP = [
-        ("real",        "Real"),
-        ("splatfacto",  "3DGS"),
-        ("nerfacto",    "NeRF"),
-        ("SD",          "SD"),
-        ("only_carla",  "Sim"),
-    ]
-
-    def get_runs(method_key, condition):
-        """Get completion values for a method/condition combo."""
-        if method_key == "real":
-            return {k: v for k, v in completions_rw.items() if k[0] == condition}
-        else:
-            return {k: v for k, v in completions_sim.items()
-                    if k[0] == method_key and k[1] == condition}
-
-    def get_fail_rate(method_key, condition):
-        """Returns (n_failed, n_total) string like '1/3'."""
-        runs = get_runs(method_key, condition)
-        if not runs:
+    def fail_rate(d):
+        if not d:
             return "---"
-        n_total = len(runs)
-        n_failed = sum(1 for v in runs.values() if v < fail_threshold)
+        n_total = len(d)
+        n_failed = sum(1 for v in d.values() if v < fail_threshold)
         return f"{n_failed}/{n_total}"
 
-    def get_completion_rate(method_key, condition):
-        """Returns completion as 'min - avg - max'."""
-        runs = get_runs(method_key, condition)
-        if not runs:
+    def completion_avg_max_min(d):
+        if not d:
             return "---"
-        vals = list(runs.values())
-        vmin = np.min(vals)
-        vavg = np.mean(vals)
-        vmax = np.max(vals)
-        return f"{vavg:.0f} - {vmax:.0f} - {vmin:.0f}"
+        vals = list(d.values())
+        return f"{np.mean(vals):.0f} - {np.max(vals):.0f} - {np.min(vals):.0f}"
 
-    # Build LaTeX
-    n_cond = len(conditions)
     lines = []
     lines.append(r"\begin{table}[H]")
     lines.append(r"\centering")
-    lines.append(r"\caption{System-level evaluation results across weather conditions.}")
+    lines.append(r"\caption{System-level evaluation: real-world vs simulated drive runs.}")
     lines.append(r"\label{tab:system_eval}")
-    lines.append(r"\resizebox{\textwidth}{!}{%")
-    lines.append(r"\begin{tabular}{ll" + "c" * n_cond + "}")
+    lines.append(r"\begin{tabular}{llc}")
+    lines.append(r"\hline")
+    lines.append(r"\textbf{Metric} & \textbf{Domain} & \textbf{Value} \\")
     lines.append(r"\hline")
 
-    # Header
-    cond_headers = " & ".join([f"\\textbf{{{c.capitalize()}}}" for c in conditions])
-    lines.append(r"\textbf{Metric} & \textbf{Domain} & " + cond_headers + r" \\")
-    lines.append(r"\hline")
+    # Fail rate
+    lines.append(f"Fail Rate & Real & {fail_rate(completions_rw)} " + r"\\")
+    lines.append(f"          & 3DGS & {fail_rate(completions_sim)} " + r"\\")
 
-    # Helper: empty cells for section header rows
-    empty_cond = " & " * n_cond
-
-    # ===================== SUCCESS / FAIL =====================
-    lines.append(r"\small{\textbf{Success / Fail}}" + " &" + empty_cond + r" \\")
-
-    # --- FAIL RATE ---
-    for i, (method_key, display_name) in enumerate(DOMAIN_MAP):
-        cells = []
-        for condition in conditions:
-            cells.append(get_fail_rate(method_key, condition))
-        metric_col = "Fail Rate" if i == 0 else ""
-        row = f"{metric_col} & {display_name} & " + " & ".join(cells) + r" \\"
-        lines.append(row)
-
-    # --- COMPLETION RATE (%) — avg - max - min ---
-    for i, (method_key, display_name) in enumerate(DOMAIN_MAP):
-        cells = []
-        for condition in conditions:
-            cells.append(get_completion_rate(method_key, condition))
-        if i == 0:
-            metric_col = r"\makecell[l]{Completion Rate (\%)\\\scriptsize{avg--max--min}}"
-        else:
-            metric_col = ""
-        row = f"{metric_col} & {display_name} & " + " & ".join(cells) + r" \\"
-        lines.append(row)
-
-    # --- FAILURE TYPE --- (OR--CC--OS--US)
-    FAILURE_TYPES = {
-        ("real", "sunny"):       "--",
-        ("real", "cloudy"):      "--",
-        ("real", "snowy"):       "3 - 0 - 0 - 3",
-        ("splatfacto", "sunny"): "--",
-        ("splatfacto", "cloudy"): "--",
-        ("splatfacto", "snowy"): "2 - 1 - 0 - 3",
-        ("nerfacto", "sunny"):   "3 - 0 - 3 - 0",
-        ("nerfacto", "cloudy"):  "--",
-        ("nerfacto", "snowy"):   "3 - 0 - 0 - 3",
-        ("SD", "sunny"):         "3 - 0 - 0 - 3",
-        ("SD", "cloudy"):        "0 - 1 - 1 - 0",
-        ("SD", "snowy"):         "2 - 1 - 3 - 0",
-        ("only_carla", "sunny"): "3 - 0 - 1 - 2",
-        ("only_carla", "cloudy"): "2 - 1 - 3 - 0",
-        ("only_carla", "snowy"): "2 - 1 - 2 - 1",
-    }
-
-    for i, (method_key, display_name) in enumerate(DOMAIN_MAP):
-        cells = []
-        for condition in conditions:
-            cells.append(FAILURE_TYPES.get((method_key, condition), "--"))
-        if i == 0:
-            metric_col = r"\makecell[l]{Failure Type\textsuperscript{*}\\\scriptsize{OR--CC--OS--US}}"
-        else:
-            metric_col = ""
-        row = f"{metric_col} & {display_name} & " + " & ".join(cells) + r" \\"
-        lines.append(row)
+    # Completion
+    lines.append(
+        r"\makecell[l]{Completion Rate (\%)\\\scriptsize{avg--max--min}} "
+        f"& Real & {completion_avg_max_min(completions_rw)} " + r"\\"
+    )
+    lines.append(
+        f"          & 3DGS & {completion_avg_max_min(completions_sim)} " + r"\\"
+    )
 
     lines.append(r"\hline")
-    lines.append(r"\end{tabular}%")
-    lines.append(r"}")
-    lines.append(r"\vspace{2pt}")
-    lines.append(r"\noindent\scriptsize{\textsuperscript{*}OR = Out of Road, CC = Car Crash, OS = Oversteer, US = Understeer.}")
+    lines.append(r"\end{tabular}")
     lines.append(r"\end{table}")
-
     return "\n".join(lines)
 
 
 # =============================================================================
-# MAIN
+#  MAIN
 # =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot all trajectories vs scenario segment on OSM")
-    parser.add_argument("--map_xodr", required=True, help="Path to .xodr file")
-    parser.add_argument("--segment", required=True, help="Path to scenario_segment.json")
-    parser.add_argument("--rw_dir", required=True, help="Directory with real-world trajectory files")
-    parser.add_argument("--sim_dirs", nargs="+", required=True,
-                        help="Simulated trajectory dirs as label=path (e.g. SD=/path/to/dir)")
-    parser.add_argument("--buffer", type=float, default=100, help="Map buffer in meters")
-    parser.add_argument("--fail_threshold", type=float, default=95.0,
-                        help="Completion %% below which a run is considered failed (default: 95)")
-    args = parser.parse_args()
+    print("=" * 80)
+    print("PLOT ALL TRAJECTORIES (real-world + simulated)")
+    print("=" * 80)
+    print(f"[INFO] Project root:    {PROJECT_ROOT}")
+    print(f"[INFO] Map XODR:        {MAP_XODR}")
+    print(f"[INFO] Segment JSON:    {SEGMENT_JSON}")
+    print(f"[INFO] Real-world dir:  {RW_DIR}")
+    print(f"[INFO] Simulated dir:   {SIM_DIR}")
+    print("=" * 80)
 
-    # --- Setup transforms ---
+    # ---- Validate inputs ----
+    for required in [MAP_XODR, SEGMENT_JSON]:
+        if not os.path.exists(required):
+            print(f"[ERROR] Missing file: {required}")
+            sys.exit(1)
+    if not os.path.isdir(RW_DIR):
+        print(f"[ERROR] Missing dir: {RW_DIR}")
+        sys.exit(1)
+    if not os.path.isdir(SIM_DIR):
+        print(f"[ERROR] Missing dir: {SIM_DIR}")
+        sys.exit(1)
+
+    # ---- Setup transforms ----
     tf_proj_to_wgs, tf_wgs_to_proj, tf_utm_to_wgs, tf_wgs_to_merc, xodr_offset = \
-        setup_transforms(args.map_xodr)
+        setup_transforms(MAP_XODR)
 
-    # --- Load scenario segment (reference path in CARLA coords) ---
-    with open(args.segment, "r") as f:
+    # ---- Load scenario segment (reference path in CARLA coords) ----
+    with open(SEGMENT_JSON, "r") as f:
         segment = json.load(f)
 
     ref_carla_x = np.array(segment["reference_path_carla_x"])
@@ -325,126 +292,83 @@ def main():
     seg_end = segment["scenario_end_m"]
     seg_length = segment["scenario_length_m"]
 
-    # Segment portion of reference path
     seg_mask = (ref_s >= seg_start) & (ref_s <= seg_end)
     seg_cx = ref_carla_x[seg_mask]
     seg_cy = ref_carla_y[seg_mask]
 
-    # Convert to mercator
-    seg_mx, seg_my = carla_array_to_merc(seg_cx, seg_cy,
-                                          tf_proj_to_wgs, tf_wgs_to_merc, xodr_offset)
-    ref_mx, ref_my = carla_array_to_merc(ref_carla_x, ref_carla_y,
-                                          tf_proj_to_wgs, tf_wgs_to_merc, xodr_offset)
+    seg_mx, seg_my = carla_array_to_merc(
+        seg_cx, seg_cy, tf_proj_to_wgs, tf_wgs_to_merc, xodr_offset
+    )
+    ref_mx, ref_my = carla_array_to_merc(
+        ref_carla_x, ref_carla_y, tf_proj_to_wgs, tf_wgs_to_merc, xodr_offset
+    )
 
-    print(f"Scenario segment: {seg_length:.1f} m [{seg_start:.1f} → {seg_end:.1f}]")
+    print(f"[INFO] Scenario segment: {seg_length:.1f} m "
+          f"[{seg_start:.1f} -> {seg_end:.1f}]")
 
-    # --- Completion tracking ---
-    # (condition, run) → completion%
     completions_rw = {}
-    # (method, condition, run) → completion%
     completions_sim = {}
 
-    # --- Load real-world trajectories ---
+    # ---- Load real-world trajectories: trajectory<N>.csv ----
     print("\nLoading real-world trajectories...")
     rw_trajs = {}
-    for fname in sorted(os.listdir(args.rw_dir)):
-        if not fname.endswith("_trajectory.txt"):
-            continue
-        match = re.match(r'(\w+?)(\d+)_trajectory\.txt', fname)
+    for fname in sorted(os.listdir(RW_DIR)):
+        match = re.match(r"trajectory(\d+)\.csv$", fname)
         if not match:
             continue
-        condition = match.group(1)
-        run = int(match.group(2))
-        path = os.path.join(args.rw_dir, fname)
-        utm_x, utm_y = load_real_trajectory_utm(path)
+        run = int(match.group(1))
+        path = os.path.join(RW_DIR, fname)
+        utm_x, utm_y = load_real_trajectory_csv(path)
+        if len(utm_x) == 0:
+            print(f"  [WARN] {fname}: empty trajectory, skipping")
+            continue
         mx, my = utm_array_to_merc(utm_x, utm_y, tf_utm_to_wgs, tf_wgs_to_merc)
-        carla_x, carla_y = utm_array_to_carla(utm_x, utm_y, tf_utm_to_wgs,
-                                               tf_wgs_to_proj, xodr_offset)
-        progress = project_onto_reference(carla_x, carla_y, ref_carla_x, ref_carla_y, ref_s)
-        rw_trajs[(condition, run)] = (mx, my)
+        carla_x, carla_y = utm_array_to_carla(
+            utm_x, utm_y, tf_utm_to_wgs, tf_wgs_to_proj, xodr_offset
+        )
+        progress = project_onto_reference(
+            carla_x, carla_y, ref_carla_x, ref_carla_y, ref_s
+        )
+        rw_trajs[run] = (mx, my)
 
-        completion = max(0, min(1.0, (progress[-1] - seg_start) / seg_length)) * 100
-        completions_rw[(condition, run)] = completion
+        completion = max(0.0, min(1.0, (progress[-1] - seg_start) / seg_length)) * 100
+        completions_rw[run] = completion
+        print(f"  {fname}: {len(mx)} pts, progress "
+              f"[{progress[0]:.1f} -> {progress[-1]:.1f}] m, "
+              f"completion={completion:.1f}%")
 
-        status = ""
-        if progress[0] > seg_start + 5.0:
-            status = f"   STARTS LATE (progress={progress[0]:.1f} m > segment start={seg_start:.1f} m)"
-        print(f"  {fname}: {len(mx)} pts, progress [{progress[0]:.1f} → {progress[-1]:.1f}] m, "
-              f"completion={completion:.1f}%{status}")
-
-    # --- Load simulated trajectories ---
+    # ---- Load simulated trajectories: splatfacto_run<N>_trajectory.json ----
     print("\nLoading simulated trajectories...")
     sim_trajs = {}
-    for entry in args.sim_dirs:
-        if "=" not in entry:
-            print(f"  WARNING: Skipping '{entry}' — expected label=path")
+    for fname in sorted(os.listdir(SIM_DIR)):
+        match = re.match(r"splatfacto_run(\d+)_trajectory\.json$", fname)
+        if not match:
             continue
-        method, dir_path = entry.split("=", 1)
-        if not os.path.isdir(dir_path):
-            print(f"  WARNING: Not a directory: {dir_path}")
+        run = int(match.group(1))
+        path = os.path.join(SIM_DIR, fname)
+        sim_x, sim_y = load_sim_trajectory(path)
+        if len(sim_x) == 0:
+            print(f"  [WARN] {fname}: empty trajectory, skipping")
             continue
+        mx, my = carla_array_to_merc(
+            sim_x, sim_y, tf_proj_to_wgs, tf_wgs_to_merc, xodr_offset
+        )
+        progress = project_onto_reference(
+            sim_x, sim_y, ref_carla_x, ref_carla_y, ref_s
+        )
+        sim_trajs[run] = (mx, my)
 
-        for fname in sorted(os.listdir(dir_path)):
-            if not fname.endswith("_trajectory.json"):
-                continue
+        completion = max(0.0, min(1.0, (progress[-1] - seg_start) / seg_length)) * 100
+        completions_sim[run] = completion
+        print(f"  {fname}: {len(mx)} pts, progress "
+              f"[{progress[0]:.1f} -> {progress[-1]:.1f}] m, "
+              f"completion={completion:.1f}%")
 
-            condition = None
-            run = None
-            effective_method = None
+    if not rw_trajs and not sim_trajs:
+        print("[ERROR] No trajectories loaded, nothing to plot.")
+        sys.exit(1)
 
-            # Pattern 1: only_carla_{condition}_map_run{N}_trajectory.json
-            match = re.match(r'only_carla_([a-z]+)_map_run(\d+)_trajectory\.json', fname)
-            if match:
-                condition = match.group(1)
-                run = int(match.group(2))
-                effective_method = method
-
-            # Pattern 2: condition_method_run{N}_trajectory.json
-            if condition is None:
-                match = re.match(r'([a-z]+)_([a-z]+)_run(\d+)_trajectory\.json', fname)
-                if match:
-                    condition = match.group(1)
-                    effective_method = match.group(2)
-                    run = int(match.group(3))
-
-            # Pattern 3: condition_run{N}_trajectory.json
-            if condition is None:
-                match = re.match(r'([a-z]+)_run(\d+)_trajectory\.json', fname)
-                if match:
-                    condition = match.group(1)
-                    run = int(match.group(2))
-                    effective_method = method
-
-            if condition is None:
-                continue
-
-            path = os.path.join(dir_path, fname)
-            sim_x, sim_y = load_sim_trajectory(path)
-            mx, my = carla_array_to_merc(sim_x, sim_y,
-                                          tf_proj_to_wgs, tf_wgs_to_merc, xodr_offset)
-            progress = project_onto_reference(sim_x, sim_y, ref_carla_x, ref_carla_y, ref_s)
-            sim_trajs[(effective_method, condition, run)] = (mx, my)
-
-            completion = max(0, min(1.0, (progress[-1] - seg_start) / seg_length)) * 100
-            completions_sim[(effective_method, condition, run)] = completion
-
-            status = ""
-            if progress[0] > seg_start + 5.0:
-                status = f"   STARTS LATE (progress={progress[0]:.1f} m > segment start={seg_start:.1f} m)"
-            print(f"  {effective_method}/{fname}: {len(mx)} pts, progress [{progress[0]:.1f} → {progress[-1]:.1f}] m, "
-                  f"completion={completion:.1f}%{status}")
-
-    # --- Determine conditions and methods ---
-    CONDITION_ORDER = ["sunny", "cloudy", "snowy"]
-    all_conditions = set(k[0] for k in rw_trajs.keys())
-    conditions = [c for c in CONDITION_ORDER if c in all_conditions]
-    methods = sorted(set(k[0] for k in sim_trajs.keys()))
-    n_cols = len(conditions)
-
-    print(f"\nConditions: {conditions}")
-    print(f"Methods: {methods}")
-
-    # --- Compute global bounds from all trajectories ---
+    # ---- Compute global bounds ----
     all_mx_list = [ref_mx]
     all_my_list = [ref_my]
     for mx, my in rw_trajs.values():
@@ -455,88 +379,68 @@ def main():
         all_my_list.append(my)
     all_mx_cat = np.concatenate(all_mx_list)
     all_my_cat = np.concatenate(all_my_list)
-    buf = args.buffer
-    xmin, xmax = all_mx_cat.min() - buf, all_mx_cat.max() + buf
-    ymin, ymax = all_my_cat.min() - buf, all_my_cat.max() + buf
+    xmin, xmax = all_mx_cat.min() - MAP_BUFFER_M, all_mx_cat.max() + MAP_BUFFER_M
+    ymin, ymax = all_my_cat.min() - MAP_BUFFER_M, all_my_cat.max() + MAP_BUFFER_M
 
-    # --- Colors ---
-    RW_COLOR = "#1E88E5"
-    METHOD_COLORS = {
-        "SD": "#E53935",
-        "splatfacto": "#FF9800",
-        "nerfacto": "#9C27B0",
-        "only_carla": "#43A047",
-    }
-    LINE_STYLES = ["-", "--", ":"]
+    # ---- Plot ----
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
 
-    # --- Plot: one column per condition ---
-    fig, axes = plt.subplots(1, n_cols, figsize=(7 * n_cols, 10))
-    if n_cols == 1:
-        axes = [axes]
+    try:
+        ctx.add_basemap(ax, crs="EPSG:3857", source=ctx.providers.CartoDB.Positron)
+    except Exception as e:
+        print(f"  [WARN] Could not load OSM tiles: {e}")
 
-    for col, condition in enumerate(conditions):
-        ax = axes[col]
-        ax.set_xlim(xmin, xmax)
-        ax.set_ylim(ymin, ymax)
+    # Scenario segment as thick light-green band
+    ax.plot(seg_mx, seg_my, color="#4CAF50", linewidth=8, alpha=0.25,
+            solid_capstyle="round", zorder=5)
+    ax.plot(seg_mx[0], seg_my[0], marker="|", color="#4CAF50",
+            markersize=20, markeredgewidth=4, zorder=25)
+    ax.plot(seg_mx[-1], seg_my[-1], marker="|", color="#F44336",
+            markersize=20, markeredgewidth=4, zorder=25)
 
-        try:
-            ctx.add_basemap(ax, crs="EPSG:3857", source=ctx.providers.CartoDB.Positron)
-        except Exception as e:
-            print(f"  Warning: Could not load tiles: {e}")
+    # Real-world runs
+    for run in sorted(rw_trajs.keys()):
+        mx, my = rw_trajs[run]
+        ls = LINE_STYLES[(run - 1) % len(LINE_STYLES)]
+        ax.plot(mx, my, color=RW_COLOR, linewidth=2.0, alpha=0.8,
+                linestyle=ls, zorder=10, label=f"Real run{run}")
+        ax.plot(mx[0],  my[0],  marker="o", color=RW_COLOR, markersize=6,
+                markeredgecolor="black", markeredgewidth=1, zorder=20)
+        ax.plot(mx[-1], my[-1], marker="s", color=RW_COLOR, markersize=6,
+                markeredgecolor="black", markeredgewidth=1, zorder=20)
 
-        ax.plot(seg_mx, seg_my, color="#4CAF50", linewidth=8, alpha=0.25,
-                solid_capstyle="round", zorder=5)
-        ax.plot(seg_mx[0], seg_my[0], marker='|', color='#4CAF50', markersize=20,
-                markeredgewidth=4, zorder=25)
-        ax.plot(seg_mx[-1], seg_my[-1], marker='|', color='#F44336', markersize=20,
-                markeredgewidth=4, zorder=25)
+    # Simulated runs
+    for run in sorted(sim_trajs.keys()):
+        mx, my = sim_trajs[run]
+        ls = LINE_STYLES[(run - 1) % len(LINE_STYLES)]
+        ax.plot(mx, my, color=SIM_COLOR, linewidth=1.8, alpha=0.8,
+                linestyle=ls, zorder=12, label=f"3DGS run{run}")
+        ax.plot(mx[0],  my[0],  marker="o", color=SIM_COLOR, markersize=6,
+                markeredgecolor="black", markeredgewidth=1, zorder=20)
+        ax.plot(mx[-1], my[-1], marker="x", color=SIM_COLOR, markersize=10,
+                markeredgewidth=2.5, zorder=20)
 
-        rw_runs = {k: v for k, v in rw_trajs.items() if k[0] == condition}
-        for (cond, run), (mx, my) in sorted(rw_runs.items()):
-            ls = LINE_STYLES[(run - 1) % len(LINE_STYLES)]
-            label = f"RW run{run}"
-            ax.plot(mx, my, color=RW_COLOR, linewidth=2.0, alpha=0.8,
-                    linestyle=ls, zorder=10, label=label)
-            ax.plot(mx[0], my[0], marker='o', color=RW_COLOR, markersize=6,
-                    markeredgecolor='black', markeredgewidth=1, zorder=20)
-            ax.plot(mx[-1], my[-1], marker='s', color=RW_COLOR, markersize=6,
-                    markeredgecolor='black', markeredgewidth=1, zorder=20)
+    ax.set_title(
+        f"Real-world vs simulated trajectories  "
+        f"(scenario segment: {seg_length:.0f} m)",
+        fontsize=14,
+    )
+    ax.legend(loc="upper right", fontsize=9)
+    ax.set_axis_off()
 
-        for method in methods:
-            color = METHOD_COLORS.get(method, "#888888")
-            method_runs = {k: v for k, v in sim_trajs.items()
-                           if k[0] == method and k[1] == condition}
-            for (m, cond, run), (mx, my) in sorted(method_runs.items()):
-                ls = LINE_STYLES[(run - 1) % len(LINE_STYLES)]
-                label = f"{method} run{run}"
-                ax.plot(mx, my, color=color, linewidth=1.8, alpha=0.8,
-                        linestyle=ls, zorder=12, label=label)
-                ax.plot(mx[0], my[0], marker='o', color=color, markersize=6,
-                        markeredgecolor='black', markeredgewidth=1, zorder=20)
-                ax.plot(mx[-1], my[-1], marker='x', color=color, markersize=10,
-                        markeredgewidth=2.5, zorder=20)
-
-        ax.set_title(f"{condition.capitalize()}", fontsize=14)
-        ax.legend(loc="upper right", fontsize=8)
-        ax.set_axis_off()
-
-    fig.suptitle(f"All Trajectories vs Scenario Segment ({seg_length:.0f} m)", fontsize=16, y=1.02)
     plt.tight_layout()
     plt.show()
 
-    # =================================================================
-    #  LATEX TABLE
-    # =================================================================
+    # ---- LaTeX table ----
     print("\n" + "=" * 70)
     print("  LATEX TABLE")
     print("=" * 70)
-
     latex = generate_latex_table(
-        completions_rw, completions_sim, conditions,
-        fail_threshold=args.fail_threshold
+        completions_rw, completions_sim, fail_threshold=FAIL_THRESHOLD_PCT
     )
     print(latex)
-
     print("\nDone.")
 
 

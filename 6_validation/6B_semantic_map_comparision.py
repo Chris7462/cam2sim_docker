@@ -3,42 +3,18 @@
 """
 6B_semantic_map_comparision.py
 
-Semantic IoU evaluation: per-frame metrics + aggregated summary.
+Per-frame semantic IoU + aggregated summary (SegFormer GT vs CARLA replay).
 
-Inputs are read from data/data_for_validation/, which is populated by
-6A_copy_data_for_validation.py from the actual sources (Step 2A SegFormer
-output for the GT, Step 5A CARLA replay output for the PRED).
+Reads from (project root):
+    data/data_for_validation/semantic/*.png (SegFormer real-world GT)
+    data/data_for_validation/semantic_carla/*.png (CARLA replay PRED)
 
-  - GT   = SegFormer outputs from real-world images:
-           data/data_for_validation/semantic/<framename>.png
-  - PRED = CARLA-replay semantic outputs (cleaned, 512x512):
-           data/data_for_validation/semantic_carla/<frame_id:06d>.png
-
-For each matched (GT, PRED) pair:
-  1. Load both, NEAREST-resize GT to 512x512 (PRED is already at that size)
-  2. Map RGB -> class IDs using a fixed palette with small color tolerance
-  3. Compute per-class IoU (background, car, road) and mIoU
-  4. Save <frame>_iou.json + <frame>_vis.png (3-panel: GT | Diff | Pred)
-
-After processing (or with --summary_only), aggregates all *_iou.json files
-in the results dir into summary.json with mean+/-std per class.
-
-Outputs (under PROJECT_ROOT/results/semantic/):
-    <frame>_iou.json    one per frame
-    <frame>_vis.png     one per frame
-    summary.json        aggregated stats (mean/std/n per class)
-
-Usage (from the cam2sim project root):
-    # Process new frames + aggregate
-    python 6_validation/6B_semantic_map_comparision.py
-
-    # Only aggregate already-computed per-frame JSONs into summary.json
-    python 6_validation/6B_semantic_map_comparision.py --summary_only
-
-    # Rerun every frame, ignoring already-existing *_iou.json
-    python 6_validation/6B_semantic_map_comparision.py --force
+Writes to (project root):
+    results/semantic/
+        <frame>_iou.json (per-frame IoU)
+        <frame>_vis.png (3-panel GT | Diff | Pred)
+        summary.json (mean/std/n per class)
 """
-
 import argparse
 import json
 import sys
@@ -65,13 +41,7 @@ RESULTS_DIR = PROJECT_ROOT / "results" / "semantic"
 TARGET_SIZE = (512, 512)  # (W, H)
 NUM_CLASSES = 3
 
-# Fixed palette - must match what both pipelines produce.
-#   SegFormer (step 2A) writes:
-#     (0, 0, 0)       -> background
-#     (128, 64, 128)  -> road
-#     (0, 0, 142)     -> car
-#   CARLA replay (cleaned) writes the same palette, with non-target
-#   pixels zeroed.
+
 COLOR_TO_CLASS = {
     (0, 0, 0):       0,   # background
     (0, 0, 142):     1,   # car
@@ -200,7 +170,7 @@ def process_frame(gt_path, pred_path, results_dir):
     if gt_arr is None or pred_arr is None:
         return None
 
-    # Make sure pred is also 512x512 (defensive: it should already be).
+    # Make sure pred is also 512x512 
     if pred_arr.shape[:2] != (TARGET_SIZE[1], TARGET_SIZE[0]):
         pred_pil = Image.fromarray(pred_arr).resize(
             TARGET_SIZE, resample=Image.Resampling.NEAREST
@@ -242,7 +212,7 @@ def process_frame(gt_path, pred_path, results_dir):
 
 
 # =============================================================================
-# AGGREGATION (replaces 6B_aggregate_semantic_results.py)
+# AGGREGATION
 # =============================================================================
 
 def aggregate_results(results_dir: Path):

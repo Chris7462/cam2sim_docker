@@ -3,36 +3,18 @@
 """
 6A_copy_data_for_validation.py
 
-Collects everything Step 6 needs into data/data_for_validation/ so that
-6B and 6C can read all their inputs from a single, self-contained directory.
+Collects Step 6 inputs into data/data_for_validation/
 
-What this script copies:
+Reads from (project root):
+    data/results/<method>_run<N>/trajectory.json
+    data/processed_dataset/<BAG>/semantic_maps/*.png
+    data/processed_dataset/<BAG>/carla_replay_dataset/semantic/*.png
 
-1) Simulated drive trajectories produced by Step 5D
-   data/results/<method>_run<N>/trajectory.json
-   ->  data/data_for_validation/GS_trajectories/<method>_run<N>_trajectory.json
-
-2) Real-world semantic maps (SegFormer GT) produced by Step 2A
-   data/processed_dataset/<BAG>/semantic_maps/*.png
-   ->  data/data_for_validation/semantic/*.png
-
-3) Simulated semantic maps (CARLA replay PRED) produced by Step 5A
-   data/processed_dataset/<BAG>/carla_replay_dataset/semantic/*.png
-   ->  data/data_for_validation/semantic_carla/*.png
-
-Behavior:
-    - Existing files in the destination directories are left untouched.
-      A copy with the same name will overwrite the previous file.
-    - Trajectory JSONs are validated before copying (must be a non-empty
-      JSON list with x/y fields). Invalid files are reported and skipped.
-    - Pass --dry_run to see what would happen without writing.
-    - Pass --skip_trajectories / --skip_semantic_gt / --skip_semantic_carla
-      to disable individual sub-copies.
-
-Usage (from the project root):
-    python 6_validation/6A_copy_data_for_validation.py
-    python 6_validation/6A_copy_data_for_validation.py --dry_run
-    python 6_validation/6A_copy_data_for_validation.py --skip_semantic_gt
+Writes to (project root):
+    data/data_for_validation/
+        GS_trajectories/<method>_run<N>_trajectory.json
+        semantic/*.png (SegFormer real-world GT)
+        semantic_carla/*.png (CARLA replay PRED)
 """
 
 import argparse
