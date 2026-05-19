@@ -2,25 +2,20 @@
 # -*- coding: utf-8 -*-
 
 """
-Replay hero trajectory in an already-loaded CARLA world and save sensor data.
+5A_trajectory_only_carla.py
 
-This script does NOT load the map.
+Replay script using only carla
 
-It assumes another script already:
-  - loaded the OpenDRIVE map into CARLA
-  - spawned parked cars
-  - optionally spawned the hero car
+Reads from (project root):
+    data/data_for_carla/<BAG>/camera.json
+    data/data_for_carla/<BAG>/trajectory_positions_rear_odom_yaw.json
 
-Reads camera config from:
-  data/data_for_carla/<BAG_NAME>/camera.json
-
-Reads trajectory from:
-  data/data_for_carla/<BAG_NAME>/trajectory_positions_rear_odom_yaw.json
-
-Saves output to:
-  data/processed_dataset/<BAG_NAME>/carla_replay_dataset
-
-The utils folder is expected next to this script.
+Writes to (project root):
+    data/processed_dataset/<BAG>/carla_replay_dataset
+        data/all_frame_data.json
+        instance/ (CARLA instance maps)
+        rgb/ (CARLA rgb frames)
+        semantic/ (CARLA semantic maps)
 """
 
 import os
@@ -397,8 +392,7 @@ def save_frame_data(
     sem_obj.convert(carla.ColorConverter.CityScapesPalette)
     sem_pil_raw = remap_segmentation_colors(carla_image_to_pil(sem_obj))
 
-    # No instance_map.txt is used anymore.
-    # This saves CARLA's raw instance segmentation colors.
+
     inst_pil_raw = carla_image_to_pil(inst_obj)
 
     sem_cleaned, inst_cleaned = clean_semantic_and_instance(
