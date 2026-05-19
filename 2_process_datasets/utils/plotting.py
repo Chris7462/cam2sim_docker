@@ -224,10 +224,7 @@ def extract_line_segment(line, p1, p2):
     return substring_line(line, d1, d2)
 
 def get_output(dist):
-    # PRIMA ERA: if hero_car_point is None or not all_spawns:
-    
-    # MODIFICA: Controlliamo solo se manca la Hero Car. 
-    # I parcheggi (all_spawns) possono essere vuoti (lista []).
+
     if hero_car_point is None:
         return None
 
