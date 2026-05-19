@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-4-multiple_log_gs_new.py
+"""5C_trajectory_replay.py
 
 Replay script for Gaussian Splatting / Nerfstudio models on cam2sim data layout.
 
@@ -14,14 +13,9 @@ Reads from (project root):
     data/data_for_gaussian_splatting/<BAG>/outputs/nerfacto_split_N/nerfacto/<TS>/utm_to_nerfstudio_transform.json
     data/data_for_gaussian_splatting/<BAG>/frame_positions_split_N_1_of_K.txt
 
-Workflow:
-  1. Start CARLA server.
-  2. Run prepare_carla_world.py once (loads xodr, spawns hero + parked cars,
-     leaves them alive in CARLA, exits).
-  3. Run THIS script. It re-uses the existing hero vehicle.
 
 Phases:
-  PHASE 1: 4-panel calibration GUI (CARLA, GS free cam, original training image,
+  PHASE 1: Optional 4-panel calibration GUI (CARLA, GS free cam, original training image,
            GS rendered from training pose).
   PHASE 2: Replay - drive trajectory with CARLA + GS side by side, save frames.
 
