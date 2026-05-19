@@ -59,14 +59,10 @@ def decode_cityscapes_mask(mask):
     return Image.fromarray(color_mask)
 
 def add_temporal_links(dataset):
-    """
-    Aggiunge la colonna 'previous' per la consistenza temporale.
-    Frame N -> Previous = Frame N-1
-    """
+
     print("⏳ Adding 'previous' column for Temporal Consistency...")
     for i in range(len(dataset)):
         if i == 0:
-            # Il primo frame ha se stesso come precedente
             dataset[i]['previous'] = dataset[i]['image']
         else:
             dataset[i]['previous'] = dataset[i-1]['image']

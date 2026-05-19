@@ -80,9 +80,6 @@ def create_plot(buildings_data, edges_data, address):
     origin_lat, origin_lon = get_origin_lat_lon(edges_data, address)
     fig.canvas.manager.set_window_title("Vehicle Spawn Position Selector")
 
-    #button_ax = fig.add_axes([0.80, 0.01, 0.18, 0.06])  # [links, unten, Breite, Höhe]
-    #close_button = Button(button_ax, "Close and Save", color="lightgray", hovercolor="gray")
-    #close_button.on_clicked(close_event)
 
     update_plot()
 
@@ -237,5 +234,5 @@ def get_output(dist):
         "dist": dist,
         "hero_car": {"position": hero_car_point,
                      "heading": hero_car_heading} if hero_car_point else None,
-        "spawn_positions": all_spawns, # Se è vuoto, salva [] nel JSON, che va benissimo
+        "spawn_positions": all_spawns,
     }

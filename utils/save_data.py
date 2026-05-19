@@ -20,8 +20,8 @@ def get_dataset_folder_name(input) -> str:
 def get_folder_name(name) -> str:
     name_ascii = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
     name_ascii = name_ascii.lower()
-    name_clean = re.sub(r'[^\w\s]', '', name_ascii)  # Sonderzeichen entfernen
-    name_clean = re.sub(r'\s+', '_', name_clean)  # Leerzeichen durch _ ersetzen
+    name_clean = re.sub(r'[^\w\s]', '', name_ascii)  
+    name_clean = re.sub(r'\s+', '_', name_clean)  
     date_str = datetime.datetime.now().strftime('%y_%m_%d')
     folder_name = f"{name_clean}_{date_str}"
     return folder_name

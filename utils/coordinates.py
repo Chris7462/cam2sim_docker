@@ -29,7 +29,7 @@ def utm_to_wgs84(easting, northing):
 
 def enu_to_latlon_precise(dx_m, dy_m):
     """
-    Conversione precisa ENU -> WGS84 (legacy function for compatibility).
+    Precise ENU -> WGS84 conversion (legacy function for compatibility).
     """
     lat_ref_rad = math.radians(LAT0)
 
@@ -72,17 +72,12 @@ def odom_xy_to_wgs84_vec(x_arr, y_arr):
     return np.asarray(lat), np.asarray(lon)
 
 def get_projected_coords(x_arr, y_arr):
-    """
-    Wrapper per il Tool di Visualizzazione.
-    Chiama la funzione sopra e poi proietta per la mappa web.
-    """
-    # Chiama la logica comune passando i parametri
+
     lat, lon = odom_xy_to_wgs84_vec(x_arr, y_arr)
     
     if len(lat) == 0:
         return np.array([]), np.array([])
 
-    # Proietta per Contextily
     xm, ym = transformer_to_3857.transform(lon, lat)
     return xm, ym
 

@@ -18,7 +18,7 @@ def parse_map_args():
     parser.add_argument("--dist", type=int, default=250, help="Distance in meters around the address to fetch the map data")
     parser.add_argument("--no_carla", action='store_true', default=False, help="Disables conversion to .xodr file for Carla (which carla is required for)")
     parser.add_argument("--skip_fetch", action='store_true', default=False, help="Skips the osm File fetch (only works if it already exists)")
-    parser.add_argument("--mode", choices=["manual", "clusters"], default="manual", help="manual = usa GUI, all = genera tutti i segmenti automaticamente")
+    parser.add_argument("--mode", choices=["manual", "clusters"], default="manual", help="manual = use GUI, clusters = automatically generate all segments")
     args = parser.parse_args()
     return args
 
@@ -53,7 +53,6 @@ def parse_testing_args():
     parser.add_argument("--no_save", action='store_true', default=False, help="Disables saving the results of the testing")
     parser.add_argument("--seconds", type=int, default=60, help="Amount of seconds the final video should be.")
     parser.add_argument('--max_frames', type=int, default=None, help='Maximum number of frames to process (default: all)')
-    # --- NUOVI ARGOMENTI AGGIUNTI QUI ---
     parser.add_argument("--sched_start", type=str, default='[0.11, 0.91, 0.0]', help="Start Schedule list as string, e.g. '[0.31, 0.0, 0.0]'")
     parser.add_argument("--sched_end", type=str, default='[0.90, 1.00, 0.1]', help="End Schedule list as string, e.g. '[1.0, 0.3, 0.3]'")
     parser.add_argument('--model_dir', type=str, help='Path to split model directory')

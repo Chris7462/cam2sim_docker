@@ -5,7 +5,6 @@ from PIL import Image
 
 
 def pil_to_surface(pil_img):
-    """Konvertiert PIL Image in Pygame Surface"""
     mode = pil_img.mode
     size = pil_img.size
     data = pil_img.tobytes()
