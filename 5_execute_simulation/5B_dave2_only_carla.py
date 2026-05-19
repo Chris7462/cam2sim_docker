@@ -2,29 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
+5B_dave2_only_carla.py
 Run DAVE-2 in an already-prepared CARLA world.
 
-This version:
-  - does NOT load the map
-  - does NOT use Stable Diffusion
-  - does NOT use YOLO
-  - sends raw CARLA RGB directly to DAVE-2
-  - expects the prepare-world script to have already loaded the map and spawned cars
+Reads from (project root):
+    data/data_for_carla/<BAG>/trajectory_positions_rear_odom_yaw.json
+    data/data_for_carla/<BAG>/camera.json
 
-Expected workflow:
-  1. Start CARLA server.
-  2. Run prepare-world script once.
-  3. Start DAVE-2 socket server.
-  4. Run this script.
-
-Reads camera config from:
-  data/data_for_carla/<BAG_NAME>/camera.json
-
-Reads trajectory start from:
-  data/data_for_carla/<BAG_NAME>/trajectory_positions_rear_odom_yaw.json
-
-Saves output to:
-  data/processed_dataset/<BAG_NAME>/dave2_runs/only_carla_run<RUN_NUMBER>
+Writes to:
+    data/processed_dataset/<BAG>/dave2_runs/only_carla_run<RUN_NUMBER>
+        data/trajectory.json
+        depth/ (CARLA depth maps)
+        instance/ (CARLA instance maps)
+        rgb/ (CARLA rgb frames)
+        semantic/ (CARLA semantic maps)
+  
 """
 
 import os
@@ -139,7 +131,6 @@ NO_SAVE = False
 
 USE_SYNCHRONOUS_MODE = True
 
-# Keep old working logic.
 REAR_TO_CENTER_OFFSET_METERS = 0.13
 HERO_SPAWN_Z_OFFSET = 0.10
 
@@ -421,7 +412,6 @@ def make_start_transform(world, first_point):
     start_y = float(loc["y"])
     start_z = float(loc["z"])
 
-    # Keep old working logic.
     start_yaw = (float(rot.get("yaw", 0.0)) + ROTATION_DEGREES) % 360.0
 
     yaw_rad = math.radians(start_yaw)
@@ -786,7 +776,6 @@ def main():
             sem_data.convert(carla.ColorConverter.CityScapesPalette)
             seg_image = remap_segmentation_colors(carla_image_to_pil(sem_data))
 
-            # No instance map in this version.
             instance_pil = carla_image_to_pil(inst_data)
 
             depth_image_pil = process_depth_to_pil(depth_data)
