@@ -1124,7 +1124,6 @@ def main():
             pt = point["transform"]
             carla_yaw_deg = pt["rotation"]["yaw"]
 
-            # Tiny back-offset like in the old script
             offset_distance = 0.13
             yaw_rad = math.radians(carla_yaw_deg)
             ox = -offset_distance * math.cos(yaw_rad)
