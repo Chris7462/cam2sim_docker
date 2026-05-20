@@ -55,7 +55,6 @@ import sys
 import json
 import math
 import re
-import time
 import argparse
 from pathlib import Path
 from queue import Empty
@@ -71,7 +70,7 @@ from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.cameras.cameras import Cameras, CameraType
 
-
+from utils.dave2_connection import connect_to_dave2_server, send_image_over_connection
 # =============================================================================
 #  PATH SETUP
 # =============================================================================
@@ -100,7 +99,6 @@ from utils.carla_simulator import (
     spawn_sensor,
     get_xodr_projection_params,
 )
-from utils.dave2_connection import connect_to_dave2_server, send_image_over_connection
 
 
 # =============================================================================
@@ -123,63 +121,19 @@ GS_DATA_ROOT = os.path.join(
     PROJECT_ROOT, "data", "data_for_gaussian_splatting", BAG_NAME
 )
 GS_OUTPUTS_DIR = os.path.join(GS_DATA_ROOT, "outputs")
-
-# Results: all drive runs land here. Each run gets its own
-# splatfacto_run<N> subfolder (auto-incremented).
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "results")
 RUN_PREFIX = "splatfacto_run"
 
 IM_WIDTH = 800
 IM_HEIGHT = 503
 
-# Drive control
-DRIVE_SPEED_KMH = 10.0          # constant forward speed for ackermann
-PREDICT_EVERY = 3               # call DAVE-2 every N frames
-
-# Hero startup (mirrors the only_carla script that works)
-LAUNCH_SPEED_KMH = 12.0           # speed for warmup launch (kick-starts ackermann)
-WARMUP_TICKS = 100                # ticks to apply launch control
-REAR_TO_CENTER_OFFSET_METERS = 0.13   # rear axle -> car center back-offset
-HERO_SPAWN_Z_OFFSET = 0.10        # +z above road waypoint (avoid clipping)
-
+DRIVE_SPEED_KMH = 10.0
 # Termination thresholds
-STUCK_THRESHOLD = 0.02          # meters / frame -> below = not moving
-STUCK_FRAME_LIMIT = 50          # consecutive stuck frames before terminate
+STUCK_THRESHOLD = 0.02          # m/frame -> below = not moving
+STUCK_FRAME_LIMIT = 100         # consecutive stuck frames before terminate
 MIN_Z_THRESHOLD = -0.5          # fall detection (meters)
-COVERAGE_THRESHOLD = 0.15       # nerfstudio units, distance to nearest train cam
+COVERAGE_THRESHOLD = 0.15       # NS units, distance to nearest train cam
 COVERAGE_FRAME_LIMIT = 30       # consecutive out-of-coverage frames
-
-# Split switching
-SWITCH_DELAY = 50               # frames before actually switching split
-
-
-def next_run_folder(base_dir, prefix=RUN_PREFIX, forced_id=None):
-    """
-    Return the next free `<base_dir>/<prefix><N>` folder path.
-
-    If `forced_id` is given, returns `<base_dir>/<prefix><forced_id>` directly
-    (even if it already exists -- caller decides whether to overwrite).
-
-    Otherwise scans existing siblings and picks max(N) + 1, starting from 1.
-    """
-    os.makedirs(base_dir, exist_ok=True)
-    if forced_id is not None:
-        return os.path.join(base_dir, f"{prefix}{int(forced_id)}")
-
-    existing = []
-    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
-    for entry in os.listdir(base_dir):
-        full = os.path.join(base_dir, entry)
-        if not os.path.isdir(full):
-            continue
-        m = pattern.match(entry)
-        if m:
-            existing.append(int(m.group(1)))
-
-    next_n = max(existing) + 1 if existing else 1
-    return os.path.join(base_dir, f"{prefix}{next_n}")
-
-
 # =============================================================================
 #  SLIDER (calibration GUI)
 # =============================================================================
@@ -345,8 +299,7 @@ class CoordinateTransformer:
 
 class SplitModel:
     def __init__(self, name, pipeline, coord_transformer, training_cameras,
-                 frame_ids, training_filenames, data_root=None,
-                 filename_to_frame_id=None):
+                 frame_ids, training_filenames, data_root=None):
         self.name = name
         self.pipeline = pipeline
         self.coord_transformer = coord_transformer
@@ -360,36 +313,11 @@ class SplitModel:
 
         self.cam_idx_to_frame_id = {}
         self.frame_id_to_cam_idx = {}
-
-        filename_to_frame_id = filename_to_frame_id or {}
-
         for i, fn in enumerate(training_filenames):
-            base = os.path.basename(str(fn))
-
-            # Prefer the real frame ID from frame_positions_split_N_*.txt.
-            # This handles overlap correctly.
-            fid = filename_to_frame_id.get(base)
-
-            # Fallback only if the positions file did not contain this image.
-            if fid is None:
-                fid = extract_frame_number(base)
-
+            fid = extract_frame_number(fn)
             if fid is not None:
                 self.cam_idx_to_frame_id[i] = fid
                 self.frame_id_to_cam_idx[fid] = i
-
-        print(f"   Camera/frame mapping: {len(self.cam_idx_to_frame_id)} / "
-            f"{len(training_filenames)} cameras mapped")
-
-        if len(training_filenames) > 0:
-            first_base = os.path.basename(str(training_filenames[0]))
-            first_fid = self.cam_idx_to_frame_id.get(0)
-            print(f"   First training image: {first_base} -> frame_id={first_fid}")
-
-            last_idx = len(training_filenames) - 1
-            last_base = os.path.basename(str(training_filenames[last_idx]))
-            last_fid = self.cam_idx_to_frame_id.get(last_idx)
-            print(f"   Last training image:  {last_base} -> frame_id={last_fid}")
 
         if (hasattr(coord_transformer, "avg_pitch")
                 and coord_transformer.avg_pitch != 0.0):
@@ -430,12 +358,12 @@ class SplitModel:
         if np.isnan(z):
             z = self.z_fallback
         return float(z)
-
+    
     def nearest_cam_distance(self, ns_x, ns_y):
         cam_xy = self.training_cameras[:, :2, 3]
         dists = np.linalg.norm(cam_xy - np.array([ns_x, ns_y]), axis=1)
         return float(dists.min())
-
+    
     def get_training_cam_c2w(self, cam_idx):
         c2w = np.eye(4)
         c2w[:3, :] = self.training_cameras[cam_idx]
@@ -445,6 +373,7 @@ class SplitModel:
         if cam_idx < 0 or cam_idx >= len(self.training_filenames):
             return None
         filepath = Path(self.training_filenames[cam_idx])
+
         candidates = [
             filepath,
             Path(self.data_root) / filepath,
@@ -538,233 +467,75 @@ def render_gs(pipeline, c2w, width, height, fov):
 
 
 # =============================================================================
-#  HERO STARTUP HELPERS (mirrors the only_carla script that works)
-# =============================================================================
-
-def stop_vehicle_motion(vehicle):
-    """Zero out velocity/angular_velocity so the car doesn't drift after teleport."""
-    try:
-        vehicle.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
-    except Exception:
-        pass
-    try:
-        vehicle.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, 0.0))
-    except Exception:
-        pass
-
-
-def make_drive_start_transform(world, traj_pt):
-    """
-    Build a clean spawn transform from a trajectory point.
-
-    The trajectory's z is the LiDAR/base_link altitude, which is typically
-    a few cm below the CARLA road mesh. Spawning there makes physics
-    expel the car upward.
-
-    We instead query the road waypoint and use waypoint.z + 0.10 m, plus
-    apply the rear->center back-offset (0.13 m) used by the only_carla
-    script that works.
-    """
-    loc = traj_pt["transform"]["location"]
-    rot = traj_pt["transform"]["rotation"]
-
-    start_x = float(loc["x"])
-    start_y = float(loc["y"])
-    start_z = float(loc["z"])
-    start_yaw = float(rot.get("yaw", 0.0))
-
-    yaw_rad = math.radians(start_yaw)
-    offset_x = -REAR_TO_CENTER_OFFSET_METERS * math.cos(yaw_rad)
-    offset_y = -REAR_TO_CENTER_OFFSET_METERS * math.sin(yaw_rad)
-
-    target_loc = carla.Location(
-        x=start_x + offset_x,
-        y=start_y + offset_y,
-        z=start_z,
-    )
-
-    waypoint = world.get_map().get_waypoint(
-        target_loc,
-        project_to_road=True,
-        lane_type=carla.LaneType.Driving,
-    )
-
-    if waypoint is not None:
-        spawn_z = waypoint.transform.location.z + HERO_SPAWN_Z_OFFSET
-        print("[INFO] Hero spawn z from road waypoint:")
-        print(f"       trajectory z: {start_z:.3f}")
-        print(f"       waypoint z:   {waypoint.transform.location.z:.3f}")
-        print(f"       spawn z:      {spawn_z:.3f}  (+{HERO_SPAWN_Z_OFFSET})")
-    else:
-        spawn_z = start_z + HERO_SPAWN_Z_OFFSET
-        print(f"[WARN] No waypoint found at ({start_x:.2f}, {start_y:.2f}). "
-              f"Using trajectory.z + offset = {spawn_z:.3f}")
-
-    return carla.Transform(
-        carla.Location(
-            x=start_x + offset_x,
-            y=start_y + offset_y,
-            z=spawn_z,
-        ),
-        carla.Rotation(
-            pitch=0.0,
-            yaw=start_yaw,
-            roll=0.0,
-        ),
-    )
-
-
-def stabilize_and_warmup(world, hero_vehicle, rgb_queue,
-                         drive_start_transform, ticks=WARMUP_TICKS):
-    """
-    Mirrors prepare_hero_for_driving() + warmup launch from the only_carla
-    script that works.
-
-    1. physics OFF, motion stopped, transform forced for 10 ticks
-    2. physics ON, gravity ON, settle for 10 ticks
-    3. apply ackermann (12 km/h, steer=0) for 100 ticks to overcome
-       startup inertia (without this, ackermann won't move the car after
-       a teleport, and the stuck-detector trips at frame ~50)
-    """
-    print("[INFO] Stabilizing hero before driving...")
-
-    # Stage 1: physics off + force position
-    hero_vehicle.set_simulate_physics(False)
-    stop_vehicle_motion(hero_vehicle)
-    hero_vehicle.set_transform(drive_start_transform)
-    for _ in range(10):
-        world.tick()
-        hero_vehicle.set_transform(drive_start_transform)
-        stop_vehicle_motion(hero_vehicle)
-
-    # Stage 2: physics on, gravity on, settle
-    try:
-        hero_vehicle.set_enable_gravity(True)
-    except Exception:
-        pass
-    hero_vehicle.set_simulate_physics(True)
-    hero_vehicle.set_autopilot(False)
-    stop_vehicle_motion(hero_vehicle)
-    for _ in range(10):
-        world.tick()
-
-    # Drain old sensor frames
-    while not rgb_queue.empty():
-        try:
-            rgb_queue.get_nowait()
-        except Empty:
-            break
-
-    # Stage 3: launch warmup
-    print(f"[INFO] Warmup launch: {ticks} ticks at {LAUNCH_SPEED_KMH} km/h")
-    launch_ctl = carla.VehicleAckermannControl(
-        speed=float(LAUNCH_SPEED_KMH / 3.6),
-        steer=0.0,
-    )
-    for _ in range(ticks):
-        hero_vehicle.apply_ackermann_control(launch_ctl)
-        world.tick()
-        # keep camera queue from filling up
-        while not rgb_queue.empty():
-            try:
-                rgb_queue.get_nowait()
-            except Empty:
-                break
-
-    actual = hero_vehicle.get_transform()
-    print(f"[INFO] Stabilization complete. "
-          f"Actual: x={actual.location.x:.2f} y={actual.location.y:.2f} "
-          f"z={actual.location.z:.3f} yaw={actual.rotation.yaw:.1f}")
-
-
-# =============================================================================
-#  SPLIT DETECTION (cam2sim layout, splatfacto only)
+#  SPLIT DETECTION (cam2sim layout)
 # =============================================================================
 
 def auto_detect_splits():
     """
     Look for splatfacto splits in:
         data/data_for_gaussian_splatting/<BAG>/outputs/splatfacto_split_<N>/splatfacto/<TS>/config.yml
-
+ 
     For each split also resolves:
-        - utm_to_nerfstudio_transform.json
-        - frame_positions_split_<N>_*.txt
+        - utm_to_nerfstudio_transform.json  (next to config.yml)
+        - frame_positions_split_<N>_*.txt   (in GS_DATA_ROOT)
     """
     splits = []
-
+ 
     if not os.path.isdir(GS_OUTPUTS_DIR):
         print(f"[WARN] Outputs folder not found: {GS_OUTPUTS_DIR}")
         return splits
-
+ 
     split_dirs = sorted([
         d for d in os.listdir(GS_OUTPUTS_DIR)
         if os.path.isdir(os.path.join(GS_OUTPUTS_DIR, d))
         and d.startswith("splatfacto_split_")
     ])
-
-    print(f"[INFO] Candidate GS split dirs: {split_dirs}")
-
+ 
     for split_dir in split_dirs:
-        match = re.match(r"^splatfacto_split_(\d+)$", split_dir)
+        match = re.match(r"splatfacto_split_(\d+)", split_dir)
         if not match:
-            print(f"[WARN] Ignoring unexpected split folder name: {split_dir}")
             continue
-
         split_num = int(match.group(1))
-
+ 
         splatfacto_dir = os.path.join(GS_OUTPUTS_DIR, split_dir, "splatfacto")
         if not os.path.isdir(splatfacto_dir):
             print(f"[WARN] Missing 'splatfacto' subfolder in {split_dir}")
             continue
-
+ 
         runs = sorted([
             d for d in os.listdir(splatfacto_dir)
             if os.path.isdir(os.path.join(splatfacto_dir, d))
         ])
-
         if not runs:
             print(f"[WARN] No runs found in {splatfacto_dir}")
             continue
-
+ 
         run_name = runs[-1]
         run_dir = os.path.join(splatfacto_dir, run_name)
-
         config_path = os.path.join(run_dir, "config.yml")
         utm_transform_path = os.path.join(run_dir, "utm_to_nerfstudio_transform.json")
-
+ 
         if not os.path.exists(config_path):
             print(f"[WARN] No config.yml in {run_dir}")
             continue
-
         if not os.path.exists(utm_transform_path):
             print(f"[WARN] No utm_to_nerfstudio_transform.json in {run_dir}")
             print(f"       Run 4C_utm_yaw_to_nerfstudio.py for split {split_num} first.")
             continue
-
-        frame_position_candidates = []
-        for fname in sorted(os.listdir(GS_DATA_ROOT)):
-            if (
-                fname.startswith(f"frame_positions_split_{split_num}_")
-                and fname.endswith(".txt")
-            ):
-                frame_position_candidates.append(fname)
-
+ 
+        # Find frame_positions_split_<N>_*.txt
         frame_positions = None
-        if frame_position_candidates:
-            chosen_fname = frame_position_candidates[0]
-            frame_positions = os.path.join(GS_DATA_ROOT, chosen_fname)
-            print(f"[INFO] Using frame positions for split_{split_num}: "
-                  f"{chosen_fname}")
-            if len(frame_position_candidates) > 1:
-                print(f"[WARN] Multiple frame position files found for split_{split_num}:")
-                for c in frame_position_candidates:
-                    print(f"       {c}")
-                print(f"       Chose: {chosen_fname}")
-        else:
+        for fname in os.listdir(GS_DATA_ROOT):
+            if (fname.startswith(f"frame_positions_split_{split_num}_")
+                    and fname.endswith(".txt")):
+                frame_positions = os.path.join(GS_DATA_ROOT, fname)
+                break
+ 
+        if frame_positions is None:
             print(f"[WARN] No frame_positions_split_{split_num}_*.txt found "
                   f"in {GS_DATA_ROOT}")
-
-        split_cfg = {
+ 
+        splits.append({
             "name": f"split_{split_num}",
             "split_num": split_num,
             "gs_config": config_path,
@@ -772,28 +543,48 @@ def auto_detect_splits():
             "frame_positions": frame_positions,
             "data_root": GS_DATA_ROOT,
             "run_name": run_name,
-        }
-
-        splits.append(split_cfg)
-
-        print(f"[INFO] Found split_{split_num} "
-              f"(run={run_name}, config={config_path})")
-
+        })
+        print(f"[INFO] Found split_{split_num} (run={run_name})")
+ 
     splits.sort(key=lambda s: s["split_num"])
-
-    print(f"[INFO] Total detected GS splits: {len(splits)}")
-
     return splits
+ 
 
+def find_best_split(frame_id, splits, last_split_idx=0):
+    current_split = splits[last_split_idx]
+
+    if current_split.min_frame <= frame_id <= current_split.max_frame:
+        return last_split_idx
+
+    covering = [(i, s) for i, s in enumerate(splits)
+                if s.min_frame <= frame_id <= s.max_frame]
+
+    if len(covering) == 1:
+        return covering[0][0]
+    if len(covering) > 1:
+        return max(covering, key=lambda x: x[1].max_frame)[0]
+
+    best_idx = last_split_idx
+    best_dist = float("inf")
+    for i, s in enumerate(splits):
+        if frame_id < s.min_frame:
+            dist = s.min_frame - frame_id
+        elif frame_id > s.max_frame:
+            dist = frame_id - s.max_frame
+        else:
+            dist = 0
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = i
+    return best_idx
 
 def find_nearest_split_by_position(carla_x, carla_y, splits):
     """
-    For DAVE-2 driving we don't have frame_ids - find the best split
-    by checking which split's training cameras centroid is closest in NS XY.
+    Find the best split by checking which split's training cameras
+    centroid is closest to current position in NS XY.
     """
     best_idx = 0
     best_dist = float("inf")
-
     for i, sm in enumerate(splits):
         ns_pos = sm.coord_transformer.carla_to_nerfstudio(carla_x, carla_y)
         cam_xy = sm.training_cameras[:, :2, 3]
@@ -802,43 +593,22 @@ def find_nearest_split_by_position(carla_x, carla_y, splits):
         if dist < best_dist:
             best_dist = dist
             best_idx = i
-
     return best_idx
 
-
-def read_frame_positions_mapping(filepath):
-    """
-    Read frame_positions_split_N_*.txt.
-
-    Returns:
-        frame_ids: list[int]
-        filename_to_frame_id: dict[str, int]
-    """
+def read_frame_ids_from_positions(filepath):
     frame_ids = []
-    filename_to_frame_id = {}
-
     if filepath and os.path.exists(filepath):
-        print(f"[INFO] Reading frame positions: {filepath}")
-
         with open(filepath, "r") as f:
             for line in f:
                 line = line.strip()
-
                 if not line or line.startswith("#"):
                     continue
-
-                parts = [p.strip() for p in line.split(",")]
-
+                parts = line.split(",")
                 try:
-                    frame_id = int(parts[0])
-                    image_file = os.path.basename(parts[-1])
+                    frame_ids.append(int(parts[0].strip()))
                 except (ValueError, IndexError):
                     continue
-
-                frame_ids.append(frame_id)
-                filename_to_frame_id[image_file] = frame_id
-
-    return frame_ids, filename_to_frame_id
+    return frame_ids
 
 
 def load_split_models(split_configs, xodr_path, fov):
@@ -866,17 +636,6 @@ def load_split_models(split_configs, xodr_path, fov):
             _, pipeline, _, step = eval_setup(config_path, test_mode="inference")
             pipeline.model.eval()
 
-            print(f"   Pipeline device: {pipeline.device}")
-
-            param_devices = sorted({str(p.device) for p in pipeline.model.parameters()})
-            print(f"   Model parameter devices: {param_devices}")
-
-            if torch.cuda.is_available():
-                print(f"   GPU allocated after load: "
-                    f"{torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-                print(f"   GPU reserved after load:  "
-                    f"{torch.cuda.memory_reserved() / 1024**3:.2f} GB")
-
             print(f"   Loaded checkpoint at step {step}")
             if hasattr(pipeline.model, "num_points"):
                 print(f"   Number of gaussians: {pipeline.model.num_points}")
@@ -895,19 +654,12 @@ def load_split_models(split_configs, xodr_path, fov):
                 if fid is not None:
                     training_frame_ids.append(fid)
 
-            positions_frame_ids, filename_to_frame_id = read_frame_positions_mapping(
+            positions_frame_ids = read_frame_ids_from_positions(
                 cfg.get("frame_positions")
             )
-
-            if positions_frame_ids:
-                all_frame_ids = sorted(set(positions_frame_ids))
-            else:
-                print(f"[WARN] {name}: no frame IDs from positions file; "
-                    f"falling back to filename parsing")
-                all_frame_ids = sorted(set(training_frame_ids))
-
-            if not all_frame_ids:
-                raise RuntimeError(f"{name}: could not determine frame IDs")
+            all_frame_ids = sorted(
+                set(training_frame_ids) | set(positions_frame_ids)
+            )
 
             print(f"OK {name}: {training_cameras.shape[0]} cameras, "
                   f"frames [{min(all_frame_ids)}-{max(all_frame_ids)}] "
@@ -921,7 +673,6 @@ def load_split_models(split_configs, xodr_path, fov):
                 frame_ids=all_frame_ids,
                 training_filenames=training_filenames,
                 data_root=str(data_root_abs),
-                filename_to_frame_id=filename_to_frame_id,
             ))
         except Exception as e:
             print(f"ERROR loading {name}: {e}")
@@ -933,45 +684,59 @@ def load_split_models(split_configs, xodr_path, fov):
 
     return split_models
 
+def next_run_folder(base_dir, prefix=RUN_PREFIX, forced_id=None):
+    os.makedirs(base_dir, exist_ok=True)
+    if forced_id is not None:
+        return os.path.join(base_dir, f"{prefix}{int(forced_id)}")
+
+    existing = []
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+    for entry in os.listdir(base_dir):
+        full = os.path.join(base_dir, entry)
+        if not os.path.isdir(full):
+            continue
+        m = pattern.match(entry)
+        if m:
+            existing.append(int(m.group(1)))
+
+    next_n = max(existing) + 1 if existing else 1
+    return os.path.join(base_dir, f"{prefix}{next_n}")
+
 
 def save_drive_data(frame_id, output_dir, carla_pil, gs_pil):
     filename = f"{frame_id:06d}"
     carla_pil.save(os.path.join(output_dir, "rgb_gt", f"{filename}.png"))
     if gs_pil:
         gs_pil.save(os.path.join(output_dir, "generated_gs", f"{filename}.png"))
-
-
 # =============================================================================
 #  MAIN
 # =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DAVE-2 + GS multi-split closed-loop driving (cam2sim layout)"
+        description="Replay with Nerfstudio-trained GS (multi-split, cam2sim layout)"
     )
     parser.add_argument("--only_carla", action="store_true",
-                        help="Run without GS (DAVE-2 sees CARLA images directly)")
+                        help="Run without GS model")
     parser.add_argument("--only_split", type=int, default=None,
-                        help="Load and use ONLY this split number")
+                        help="Load and use ONLY this split number "
+                             "(useful for low-VRAM GPUs). "
+                             "All trajectory frames will use this split.")
     parser.add_argument("--max_frames", type=int, default=None,
-                        help="Maximum frames before stopping")
+                        help="Maximum number of frames to render")
     parser.add_argument("--skip_calibration", action="store_true", default=True,
-                            help="Skip Phase 1 free camera calibration (default: True)")
-    parser.add_argument("--no_save", action="store_true",
+                        help="Skip Phase 1 free camera calibration (default: True)")
+    parser.add_argument("--no_save", action="store_true", default=False,
                         help="Disable frame saving")
     parser.add_argument("--output_dir", type=str, default=None,
-                        help="Custom output directory for this run. "
-                             "If omitted, the script auto-picks "
-                             "data/results/splatfacto_run<N> with the next free N.")
+                        help="Custom output dir. If omitted auto-picks "
+                             "data/results/splatfacto_run<N>.")
     parser.add_argument("--run_id", type=int, default=None,
-                        help="Force a specific run number, e.g. --run_id 5 -> "
-                             "data/results/splatfacto_run5. Useful for re-running "
-                             "the same slot. If the folder exists, files inside "
-                             "may be overwritten.")
+                        help="Force a specific run number.")
     args = parser.parse_args()
 
     print("=" * 80)
-    print("DAVE-2 DRIVE: CARLA + Gaussian Splatting (multi-split)")
+    print("REPLAY: CARLA + Gaussian Splatting (multi-split)")
     print("=" * 80)
     print(f"[INFO] Project root:    {PROJECT_ROOT}")
     print(f"[INFO] Bag name:        {BAG_NAME}")
@@ -979,20 +744,9 @@ def main():
     print(f"[INFO] Trajectory:      {TRAJECTORY_FILE}")
     print(f"[INFO] Camera config:   {CAMERA_CONFIG_FILE}")
     print(f"[INFO] GS data root:    {GS_DATA_ROOT}")
-    print(f"[INFO] Results root:    {DEFAULT_OUTPUT_DIR}")
+    print(f"[INFO] Output dir:      {args.output_dir}")
     print(f"[INFO] CARLA:           {CARLA_IP}:{CARLA_PORT}")
     print("=" * 80)
-
-    print("[GPU CHECK]")
-    print(f"torch version: {torch.__version__}")
-    print(f"torch cuda version: {torch.version.cuda}")
-    print(f"cuda available: {torch.cuda.is_available()}")
-
-    if torch.cuda.is_available():
-        print(f"cuda device count: {torch.cuda.device_count()}")
-        print(f"cuda device 0: {torch.cuda.get_device_name(0)}")
-    else:
-        print("[WARN] PyTorch does not see CUDA. GS will likely run on CPU.")
 
     # ---- Camera config ----
     with open(CAMERA_CONFIG_FILE, "r") as f:
@@ -1022,7 +776,8 @@ def main():
                 print(f"[ERROR] --only_split {args.only_split} requested but "
                       f"no matching split found")
                 sys.exit(1)
-            print(f"[INFO] Filtered to ONLY split_{args.only_split}")
+            print(f"[INFO] Filtered to ONLY split_{args.only_split} "
+                  f"(--only_split mode)")
 
         if split_configs:
             split_models = load_split_models(split_configs, XODR_FILE, fov=fov)
@@ -1042,11 +797,11 @@ def main():
     # ---- Connect to CARLA ----
     print(f"\n[INFO] Connecting to CARLA at {CARLA_IP}:{CARLA_PORT}...")
     client = carla.Client(CARLA_IP, CARLA_PORT)
-    client.set_timeout(40.0)
+    client.set_timeout(20.0)
     world = client.get_world()
     tm = client.get_trafficmanager(8000)
 
-    # ---- Load trajectory (used to teleport vehicle for calibration & start) ----
+    # ---- Load trajectory ----
     with open(TRAJECTORY_FILE, "r") as f:
         trajectory_points = json.load(f)
     print(f"[INFO] Loaded {len(trajectory_points)} trajectory points.")
@@ -1118,13 +873,11 @@ def main():
     font = pygame.font.SysFont("Arial", 16)
     clock = pygame.time.Clock()
 
-    # ---- Connect to DAVE-2 server ----
     print("\n[INFO] Connecting to DAVE-2 server...")
     dave2_conn = connect_to_dave2_server()
     print("[INFO] DAVE-2 connected.")
-
     # ============================================================
-    #  PHASE 1: CALIBRATION (4-panel + sliders, per split)
+    #  PHASE 1: CALIBRATION (4-panel + sliders)
     # ============================================================
     calibration_offsets = {}
 
@@ -1138,7 +891,7 @@ def main():
             print(f"  CALIBRATING: {sm.name}")
             print(f"  Frames [{sm.min_frame}-{sm.max_frame}]")
             print(f"  WASD=move, Mouse=look, QE=up/down, Scroll=speed")
-            print(f"  [/]=prev/next training cam, R=reset, ENTER=next split")
+            print(f"  [/]=prev/next training cam, T=test, P=print, R=reset, ENTER=next split")
             print(f"{'='*60}")
 
             pygame.display.set_caption(f"Calibrating: {sm.name} | 4-Panel View")
@@ -1245,10 +998,10 @@ def main():
 
                 train_fid = sm.cam_idx_to_frame_id.get(current_train_cam_idx, "?")
                 screen.blit(font.render(
-                    f"Original (cam #{current_train_cam_idx}, frame {train_fid})",
+                    f"Original Training Image (cam #{current_train_cam_idx}, frame {train_fid})",
                     True, (255, 200, 0)), (10, IM_HEIGHT + 10))
                 screen.blit(font.render(
-                    f"GS Training Pose (cam #{current_train_cam_idx})",
+                    f"GS from Training Pose (cam #{current_train_cam_idx}, frame {train_fid})",
                     True, (255, 150, 255)), (IM_WIDTH + 10, IM_HEIGHT + 10))
 
                 pos_info = (f"Pos: ({adjusted_pos[0]:.3f}, "
@@ -1268,8 +1021,11 @@ def main():
 
                 help_y = cal_win_h - 40
                 screen.blit(font.render(
-                    "WASD=move Mouse=look QE=up/down [/]=prev/next cam ENTER=drive",
+                    "WASD=move Mouse=look QE=up/down Scroll=speed [/]=prev/next cam",
                     True, (0, 255, 0)), (10, help_y))
+                screen.blit(font.render(
+                    f"T=test P=print R=reset ENTER=next ({sm.name})",
+                    True, (0, 255, 0)), (10, help_y + 20))
 
                 pygame.display.flip()
 
@@ -1347,13 +1103,11 @@ def main():
             cx, cy_c = cam_tf.location.x, cam_tf.location.y
             ns_from_tf = sm.coord_transformer.carla_to_nerfstudio(cx, cy_c)
             slider_off = np.array([sliders[3].val, sliders[4].val, sliders[5].val])
-            computed_pos_offset = (cam_pos - ns_from_tf) + slider_off
+            pos_offset = (cam_pos - ns_from_tf) + slider_off
 
             ns_z_interp = sm.lookup_z(ns_from_tf[0], ns_from_tf[1])
             z_calib = cam_pos[2] + sliders[5].val
             z_offset_from_interp = z_calib - ns_z_interp
-
-            pos_offset = np.zeros(3, dtype=np.float64)
 
             calibration_offsets[sm.name] = {
                 "pos_offset": pos_offset,
@@ -1363,11 +1117,10 @@ def main():
                 "z_offset": z_offset_from_interp,
             }
             print(f"OK {sm.name} calibrated: "
-                f"computed_pos_offset=({computed_pos_offset[0]:.4f}, "
-                f"{computed_pos_offset[1]:.4f}, {computed_pos_offset[2]:.4f}) "
-                f"[XY disabled for driving], "
-                f"yaw_offset={math.degrees(yaw_offset):.2f} deg, "
-                f"z_offset_from_interp={z_offset_from_interp:.4f}")
+                  f"pos_offset=({pos_offset[0]:.4f}, {pos_offset[1]:.4f}, "
+                  f"{pos_offset[2]:.4f}), "
+                  f"yaw_offset={math.degrees(yaw_offset):.2f} deg, "
+                  f"z_offset_from_interp={z_offset_from_interp:.4f}")
 
     if args.skip_calibration and split_models:
         for sm in split_models:
@@ -1375,53 +1128,32 @@ def main():
             fid = sm.cam_idx_to_frame_id.get(0)
             tp = trajectory_by_frame.get(fid)
             if tp:
-                cal_pt = tp["transform"]
-                hero_vehicle.set_transform(carla.Transform(
-                    carla.Location(
-                        x=cal_pt["location"]["x"],
-                        y=cal_pt["location"]["y"],
-                        z=cal_pt["location"]["z"],
-                    ),
-                    carla.Rotation(pitch=0, yaw=cal_pt["rotation"]["yaw"], roll=0),
-                ))
-                world.tick()
-                try:
-                    rgb_queue.get(block=True, timeout=1.0)
-                except Empty:
-                    pass
-
-                cam_tf = rgb_sensor.get_transform()
-                cx, cy_c = cam_tf.location.x, cam_tf.location.y
-                ns_from_tf = sm.coord_transformer.carla_to_nerfstudio(cx, cy_c)
-
-                computed_pos_offset = cam_pos_train - ns_from_tf
+                cx = tp["transform"]["location"]["x"]
+                cy = tp["transform"]["location"]["y"]
+                ns_from_tf = sm.coord_transformer.carla_to_nerfstudio(cx, cy)
+                pos_offset = cam_pos_train - ns_from_tf
                 ns_z_interp = sm.lookup_z(ns_from_tf[0], ns_from_tf[1])
-                z_offset = cam_pos_train[2] - ns_z_interp
-
-                pos_offset = np.zeros(3, dtype=np.float64)
-
                 calibration_offsets[sm.name] = {
                     "pos_offset": pos_offset,
                     "yaw_offset": 0.0,
                     "pitch_offset": 0.0,
                     "roll_offset": 0.0,
-                    "z_offset": z_offset,
+                    "z_offset": cam_pos_train[2] - ns_z_interp,
                 }
-                print(f"[skip_calibration] {sm.name}: "
-                    f"computed_pos_offset=({computed_pos_offset[0]:.4f}, "
-                    f"{computed_pos_offset[1]:.4f}, {computed_pos_offset[2]:.4f}) "
-                    f"[XY disabled], z_offset={z_offset:.4f}")
+                print(f"[skip_calibration] {sm.name}: auto pos_offset="
+                      f"({pos_offset[0]:.4f}, {pos_offset[1]:.4f}, "
+                      f"{pos_offset[2]:.4f})")
 
     # ============================================================
-    #  PHASE 2: DAVE-2 AUTONOMOUS DRIVING
+    #  PHASE 2: REPLAY
     # ============================================================
     win_w = IM_WIDTH * 2
     win_h = IM_HEIGHT
     screen = pygame.display.set_mode((win_w, win_h))
-    pygame.display.set_caption("DAVE-2 + GS | Multi-Split Driving")
-    print("\n[INFO] Starting Autonomous Drive...")
+    pygame.display.set_caption("GS Replay (Multi-Split) | Driving")
 
-    # ---- Output dir setup ----
+    print(f"\n[INFO] Replaying with {len(split_models)} split(s)...")
+
     save_flag = not args.no_save
     run_folder = None
     if save_flag:
@@ -1435,55 +1167,71 @@ def main():
             )
         os.makedirs(os.path.join(run_folder, "rgb_gt"), exist_ok=True)
         os.makedirs(os.path.join(run_folder, "generated_gs"), exist_ok=True)
+        os.makedirs(os.path.join(run_folder, "combined"), exist_ok=True)
         print(f"[INFO] Run output:    {run_folder}")
         print(f"[INFO] Trajectory at: {os.path.join(run_folder, 'trajectory.json')}")
     else:
         print("[INFO] --no_save set: nothing will be written.")
 
-    # ---- Build drive-start transform (waypoint.z + back-offset) ----
-    if split_models:
-        sm_first = split_models[0]
-        first_fid = sm_first.get_first_training_frame_id()
-        tp = trajectory_by_frame.get(first_fid)
-        if tp:
-            drive_start_transform = make_drive_start_transform(world, tp)
-            print(f"[INFO] Starting at first training camera (frame {first_fid})")
-        else:
-            drive_start_transform = start_transform
-            print(f"[WARN] Frame {first_fid} not in trajectory - using default start")
-    else:
-        drive_start_transform = start_transform
+    trajectory_log = [] 
 
-    # ---- Stabilize physics + warmup launch (kicks ackermann) ----
-    stabilize_and_warmup(world, hero_vehicle, rgb_queue, drive_start_transform)
-
-    # ---- Drive loop state ----
     current_split_idx = 0
     switch_pending_idx = -1
     switch_pending_frame = 0
-    frame = 0
-    trajectory_log = []
+    SWITCH_DELAY = 50
+    
+    start_pt = trajectory_points[0]["transform"]
+    hero_vehicle.set_transform(carla.Transform(
+        carla.Location(x=start_pt["location"]["x"],
+                       y=start_pt["location"]["y"],
+                       z=start_pt["location"]["z"]),
+        carla.Rotation(pitch=0, yaw=start_pt["rotation"]["yaw"], roll=0),
+    ))
+    world.tick()
+    try:
+        rgb_queue.get(block=True, timeout=1.0)
+    except Empty:
+        pass
+    print("[INFO] Teleported to trajectory frame 0")
+    hero_vehicle.set_simulate_physics(True)
+    hero_vehicle.set_enable_gravity(True)
+    world.tick()
+    print("[INFO] Physics enabled")
+    # Termination state
+    prev_loc = None
+    stuck_counter = 0
+    out_of_coverage_count = 0
     raw_steer = 0.0
     norm_steer = 0.0
-    out_of_coverage_count = 0
-    stuck_counter = 0
-    prev_loc = None
 
     try:
-        while True:
-            frame += 1
+        end_idx = len(trajectory_points)
+        if args.max_frames is not None:
+            end_idx = min(args.max_frames, end_idx)
+        print(f"[INFO] Running {end_idx} frames")
 
-            if args.max_frames is not None and frame > args.max_frames:
-                print(f"[F{frame}] Reached max_frames={args.max_frames} - stopping.")
+        idx = 0
+        while True:
+            if args.max_frames is not None and idx >= args.max_frames:
+                print(f"[F{idx}] Reached max_frames={args.max_frames}. Terminating.")
                 break
+
+            # Use last trajectory point as fallback after exhausting trajectory
+            if idx < len(trajectory_points):
+                point = trajectory_points[idx]
+            else:
+                point = trajectory_points[-1]
+            frame_id = point["frame_id"]
+            pt = point["transform"]
+            carla_yaw_deg = pt["rotation"]["yaw"]
 
             world.tick()
 
-            # --- TERMINATION CHECKS ---
+            # --- TERMINATION CHECKS (fall + stuck) ---
             cur_loc = hero_vehicle.get_location()
 
             if cur_loc.z < MIN_Z_THRESHOLD:
-                print(f"[F{frame}] FAIL: Car fell off map (z={cur_loc.z:.2f}). Terminating.")
+                print(f"[F{idx}] FAIL: Car fell off map (z={cur_loc.z:.2f}). Terminating.")
                 break
 
             if prev_loc is not None:
@@ -1492,62 +1240,54 @@ def main():
                 else:
                     stuck_counter = 0
                 if stuck_counter > STUCK_FRAME_LIMIT:
-                    print(f"[F{frame}] FAIL: Car stuck for {STUCK_FRAME_LIMIT} frames. Terminating.")
+                    print(f"[F{idx}] FAIL: Car stuck for {STUCK_FRAME_LIMIT} frames. Terminating.")
                     break
             prev_loc = cur_loc
 
-            vehicle_transform = hero_vehicle.get_transform()
-            spectator = world.get_spectator()
-            spectator.set_transform(carla.Transform(
-                vehicle_transform.location + carla.Location(z=10),
-                carla.Rotation(pitch=-90)
-            ))
-
             try:
-                rgb_data = rgb_queue.get(block=True, timeout=1.0)
+                rgb_data = rgb_queue.get(block=True, timeout=2.0)
                 rgb_np = np.frombuffer(rgb_data.raw_data, dtype=np.uint8).reshape(
                     (rgb_data.height, rgb_data.width, 4))[:, :, :3][:, :, ::-1]
                 carla_pil = Image.fromarray(rgb_np)
             except Empty:
                 continue
 
-            steering_image = None
             gs_pil = None
+            active_split_name = "none"
+            ns_pos_raw = None
+            offsets = None
 
-            if only_carla:
-                steering_image = carla_pil
-            else:
+            if split_models:
                 cam_tf = rgb_sensor.get_transform()
                 carla_x = cam_tf.location.x
                 carla_y = cam_tf.location.y
-                carla_yaw_rad = math.radians(cam_tf.rotation.yaw)
 
-                # --- SPLIT SWITCHING (with delay) ---
-                if len(split_models) > 1:
-                    new_split_idx = find_nearest_split_by_position(
-                        carla_x, carla_y, split_models)
-                    if new_split_idx != current_split_idx:
-                        if switch_pending_idx != new_split_idx:
-                            switch_pending_idx = new_split_idx
-                            switch_pending_frame = frame
-                        elif frame - switch_pending_frame >= SWITCH_DELAY:
-                            print(f"[F{frame}] Switching: "
-                                  f"{split_models[current_split_idx].name} -> "
-                                  f"{split_models[new_split_idx].name} "
-                                  f"(delayed {SWITCH_DELAY} frames)")
-                            current_split_idx = new_split_idx
-                            switch_pending_idx = -1
-
-                            sm_new = split_models[current_split_idx]
-                            warmup_c2w = sm_new.get_training_cam_c2w(0)
-                            for _ in range(5):
-                                render_gs(sm_new.pipeline, warmup_c2w,
-                                          IM_WIDTH, IM_HEIGHT, fov)
-                            print(f"   Warmup: 5 full-res frames rendered for {sm_new.name}")
-                    else:
+                new_split_idx = find_nearest_split_by_position(
+                    carla_x, carla_y, split_models
+                )
+                if new_split_idx != current_split_idx:
+                    if switch_pending_idx != new_split_idx:
+                        switch_pending_idx = new_split_idx
+                        switch_pending_frame = idx
+                    elif idx - switch_pending_frame >= SWITCH_DELAY:
+                        print(f"[F{idx}] Switching: "
+                              f"{split_models[current_split_idx].name} -> "
+                              f"{split_models[new_split_idx].name} "
+                              f"(delayed {SWITCH_DELAY} frames)")
+                        current_split_idx = new_split_idx
                         switch_pending_idx = -1
 
+                        sm_new = split_models[current_split_idx]
+                        warmup_c2w = sm_new.get_training_cam_c2w(0)
+                        for _ in range(5):
+                            render_gs(sm_new.pipeline, warmup_c2w,
+                                      IM_WIDTH, IM_HEIGHT, fov)
+                        print(f"   Warmup: 5 frames rendered for {sm_new.name}")
+                else:
+                    switch_pending_idx = -1
+
                 sm = split_models[current_split_idx]
+                active_split_name = sm.name
                 offsets = calibration_offsets.get(sm.name, {
                     "pos_offset": np.zeros(3),
                     "yaw_offset": 0.0,
@@ -1556,20 +1296,27 @@ def main():
                     "z_offset": 0.0,
                 })
 
+                cam_tf = rgb_sensor.get_transform()
+                carla_x = cam_tf.location.x
+                carla_y = cam_tf.location.y
+                carla_yaw_rad = math.radians(cam_tf.rotation.yaw)
+
                 ns_pos_raw = sm.coord_transformer.carla_to_nerfstudio(
-                    carla_x, carla_y)
+                    carla_x, carla_y
+                )
                 ns_pos_raw[2] = sm.lookup_z(ns_pos_raw[0], ns_pos_raw[1])
 
+                # --- COVERAGE CHECK (across ALL splits) ---
                 coverage_dist = sm.nearest_cam_distance(ns_pos_raw[0], ns_pos_raw[1])
                 if coverage_dist > COVERAGE_THRESHOLD:
                     out_of_coverage_count += 1
                     if out_of_coverage_count >= COVERAGE_FRAME_LIMIT:
-                        print(f"\n[F{frame}] Out of training coverage for "
+                        print(f"[F{idx}] Out of training coverage for "
                               f"{out_of_coverage_count} frames "
-                              f"(dist={coverage_dist:.4f} > {COVERAGE_THRESHOLD}) - stopping.")
+                              f"(dist={coverage_dist:.4f} > {COVERAGE_THRESHOLD}). Terminating.")
                         break
                     if out_of_coverage_count == 1:
-                        print(f"[F{frame}] WARN: Approaching coverage edge "
+                        print(f"[F{idx}] WARN: Approaching coverage edge "
                               f"(dist={coverage_dist:.4f})")
                 else:
                     out_of_coverage_count = 0
@@ -1578,81 +1325,94 @@ def main():
                 ns_pos[2] = ns_pos_raw[2] + offsets.get("z_offset", 0.0)
 
                 ns_yaw_raw = sm.coord_transformer.transform_yaw_carla_to_nerfstudio(
-                    carla_yaw_rad)
+                    carla_yaw_rad
+                )
                 ns_yaw = ns_yaw_raw + offsets["yaw_offset"]
                 ns_pitch = sm.avg_pitch + offsets["pitch_offset"]
                 ns_roll = sm.avg_roll + offsets["roll_offset"]
 
-                if frame % 100 == 0:
-                    print(f"[F{frame}] {sm.name} | CARLA: ({carla_x:.1f}, {carla_y:.1f}) "
-                          f"yaw={math.degrees(carla_yaw_rad):.1f}deg -> "
-                          f"NS: ({ns_pos[0]:.4f}, {ns_pos[1]:.4f}, {ns_pos[2]:.4f}) "
+                if idx % 100 == 0:
+                    print(f"[Frame {idx}] {sm.name} | CARLA: "
+                          f"({carla_x:.2f}, {carla_y:.2f}) "
+                          f"yaw={math.degrees(carla_yaw_rad):.1f}deg -> NS: "
+                          f"({ns_pos[0]:.4f}, {ns_pos[1]:.4f}, {ns_pos[2]:.4f}) "
                           f"yaw={math.degrees(ns_yaw):.1f}deg")
 
                 c2w = build_nerfstudio_c2w(ns_pos, ns_yaw, ns_pitch, ns_roll)
                 gs_pil = render_gs(sm.pipeline, c2w, IM_WIDTH, IM_HEIGHT, fov)
-
-                steering_image = gs_pil
-
-            # --- DAVE-2 INFERENCE (every PREDICT_EVERY frames) ---
-            if (frame - 1) % PREDICT_EVERY == 0:
-                raw_steer, _ = send_image_over_connection(dave2_conn, steering_image)
-                norm_steer = raw_steer / (3 * np.pi)
-
-            if frame % 50 == 0:
-                print(f"[F{frame}] Steer: raw={raw_steer:.4f} norm={norm_steer:.4f}")
-
-            # --- DISPLAY: CARLA on left, GS (or CARLA again) on right ---
-            display_img = Image.new("RGB", (win_w, win_h))
-            display_img.paste(carla_pil, (0, 0))
+            
             if gs_pil is not None:
-                display_img.paste(gs_pil, (IM_WIDTH, 0))
-            else:
-                display_img.paste(carla_pil, (IM_WIDTH, 0))
-            screen_surf = pygame.image.fromstring(
-                display_img.tobytes(), display_img.size, display_img.mode)
-            screen.blit(screen_surf, (0, 0))
+                raw_steer, throttle = send_image_over_connection(dave2_conn, gs_pil)
+                norm_steer = raw_steer / (3 * np.pi)
+                if idx % 20 == 0:
+                    print(f"[F{idx}] DAVE-2 norm_steer={norm_steer:.4f} "
+                          f"throttle={throttle:.4f}")
+                ackermann_control = carla.VehicleAckermannControl(
+                    speed=float(DRIVE_SPEED_KMH / 3.6),
+                    steer=float(-norm_steer)
+                )
+                hero_vehicle.apply_ackermann_control(ackermann_control)    
+            combined = Image.new("RGB", (win_w, IM_HEIGHT))
+            combined.paste(carla_pil, (0, 0))
+            if gs_pil:
+                combined.paste(gs_pil, (IM_WIDTH, 0))
 
-            screen.blit(font.render(f"Frame {frame}", True, (0, 255, 0)), (10, 10))
-            if split_models and not only_carla:
-                screen.blit(font.render(
-                    f"Split: {split_models[current_split_idx].name}",
-                    True, (255, 200, 0)), (IM_WIDTH + 10, 10))
-            screen.blit(font.render(
-                f"Steer: {norm_steer:+.3f}",
-                True, (0, 200, 255)), (IM_WIDTH + 10, 30))
-
-            pygame.display.flip()
-
-            # --- ACKERMANN CONTROL ---
-            ackermann_control = carla.VehicleAckermannControl(
-                speed=float(DRIVE_SPEED_KMH / 3.6),
-                steer=float(-norm_steer)
-            )
-            hero_vehicle.apply_ackermann_control(ackermann_control)
-
-            # --- LOG TRAJECTORY ---
             if save_flag:
-                # save_drive_data(frame, run_folder, carla_pil, gs_pil)
+                save_drive_data(idx, run_folder, carla_pil, gs_pil)
+                combined.save(os.path.join(
+                    run_folder, "combined", f"{idx:06d}.jpg"), quality=95)
 
                 veh_tf = hero_vehicle.get_transform()
                 trajectory_log.append({
-                    "frame": frame,
+                    "frame": idx,
                     "x": round(veh_tf.location.x, 4),
                     "y": round(veh_tf.location.y, 4),
                     "z": round(veh_tf.location.z, 4),
                     "yaw": round(veh_tf.rotation.yaw, 4),
-                    "steer_raw": round(float(raw_steer), 6),
-                    "steer_norm": round(float(norm_steer), 6),
-                    "split": (split_models[current_split_idx].name
-                              if split_models and not only_carla else "none"),
+                    "steer_raw": round(float(raw_steer), 6) if gs_pil else 0.0,
+                    "steer_norm": round(float(norm_steer), 6) if gs_pil else 0.0,
+                    "split": active_split_name,
                 })
+
+            screen.blit(pygame.image.fromstring(
+                combined.tobytes(), combined.size, combined.mode), (0, 0))
+            screen.blit(font.render(
+                f"Frame {idx}/{len(trajectory_points)} | ID: {frame_id}",
+                True, (0, 255, 0)), (10, 10))
+            screen.blit(font.render(f"Split: {active_split_name}",
+                        True, (255, 200, 0)), (IM_WIDTH + 10, 10))
+
+            cam_tf = rgb_sensor.get_transform()
+            cam_loc = cam_tf.location
+            cam_rot = cam_tf.rotation
+            screen.blit(font.render(
+                f"CARLA CAM XYZ: {cam_loc.x:+.2f}, {cam_loc.y:+.2f}, {cam_loc.z:+.2f}",
+                True, (0, 255, 0)), (10, 30))
+            screen.blit(font.render(
+                f"CARLA CAM RPY: {cam_rot.roll:+.1f}  {cam_rot.pitch:+.1f}  "
+                f"{cam_rot.yaw:+.1f}",
+                True, (0, 255, 0)), (10, 50))
+            if split_models and ns_pos_raw is not None:
+                screen.blit(font.render(
+                    f"NS Z(interp): {ns_pos_raw[2]:.4f} + "
+                    f"offset {offsets.get('z_offset', 0.0):.4f} = {ns_pos[2]:.4f}",
+                    True, (255, 150, 0)), (IM_WIDTH + 10, 30))
+
+            veh_tf = hero_vehicle.get_transform()
+            screen.blit(font.render(
+                f"CARLA VEH XYZ: {veh_tf.location.x:+.2f}, {veh_tf.location.y:+.2f}, "
+                f"{veh_tf.location.z:+.2f}",
+                True, (0, 200, 255)), (10, 70))
+            screen.blit(font.render(
+                f"CARLA VEH YAW: {veh_tf.rotation.yaw:+.1f} deg",
+                True, (0, 200, 255)), (10, 90))
+            pygame.display.flip()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or \
                    (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     raise KeyboardInterrupt
-
+            idx += 1
             clock.tick(60)
 
     except KeyboardInterrupt:
