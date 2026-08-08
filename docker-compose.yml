@@ -1,0 +1,102 @@
+
+# =============================================================================
+# Cam2Sim docker-compose
+#
+# Services:
+#   pipeline     - data_extraction + nerfstudio conda envs, runs stages 1-3,
+#                  5A/5B/5C/5D, COLMAP, validation. Owns the network namespace
+#                  that carla-server and dave2-server join, so all the
+#                  original hardcoded `127.0.0.1` connections in the source
+#                  scripts (CARLA_IP, DAVE-2 socket) work with zero code
+#                  changes.
+#   carla-server - official CARLA 0.9.16 simulator binary.
+#   dave2-server - TensorFlow 2.13 / Python 3.8 DAVE-2 TCP server, only
+#                  needed for Step 5 modes 5B/5D.
+#
+# GPU: all services request the single RTX 2080 (8GB). Running CARLA +
+# Nerfstudio rendering + DAVE-2 concurrently (mode 5D) is the tightest case
+# for VRAM - see docker/README.md for tuning notes if you hit OOM.
+#
+# X11: the pipeline container needs your host's X socket + DISPLAY for the
+# live pygame window (5C/5D). Run `xhost +local:docker` on the host before
+# `docker compose up`. See docker/README.md.
+# =============================================================================
+
+x-gpu-all: &gpu-all
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: docker/pipeline/Dockerfile
+    image: cam2sim-pipeline:latest
+    container_name: cam2sim-pipeline
+    <<: *gpu-all
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - .:/workspace/cam2sim
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    working_dir: /workspace/cam2sim
+    stdin_open: true
+    tty: true
+    # Keeps the container up for `docker compose exec pipeline ...` /
+    # scripts/run_step5.sh to drive it. Actual pipeline stages are invoked
+    # via `docker compose exec`, not as this container's main process.
+    command: ["sleep", "infinity"]
+
+  carla-server:
+    image: carlasim/carla:0.9.16
+    container_name: cam2sim-carla
+    <<: *gpu-all
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    # Shares pipeline's network namespace: CARLA appears on pipeline's
+    # 127.0.0.1:2000-2002, matching CARLA_IP="127.0.0.1" hardcoded in
+    # 3_generate_simulation_data/utils/config.py. No source edits needed.
+    network_mode: "service:pipeline"
+    depends_on:
+      - pipeline
+    # CARLA's documented Docker run method changed starting 0.9.16 - this
+    # command matches their current official example (no manual `cd` into
+    # a specific install path needed, unlike 0.9.15 and earlier). Source:
+    # https://carla.readthedocs.io/en/latest/build_docker/
+    # -RenderOffScreen: CARLA still rasterizes with the GPU but doesn't try
+    # to open its own window. Your view is the pygame window from 5C/5D,
+    # not CARLA's own window.
+    command: ["bash", "CarlaUE4.sh", "-RenderOffScreen", "-nosound", "-quality-level=Low"]
+    restart: unless-stopped
+
+  dave2-server:
+    build:
+      context: .
+      dockerfile: docker/dave2/Dockerfile
+    image: cam2sim-dave2:latest
+    container_name: cam2sim-dave2
+    volumes:
+      - .:/workspace/cam2sim
+    working_dir: /workspace/cam2sim/system_under_test
+    # Shares pipeline's network namespace: the server binds 127.0.0.1:5090,
+    # matching the hardcoded HOST in system_under_test/communicator.py and
+    # 5_execute_simulation/utils/dave2_connection.py. No source edits needed.
+    network_mode: "service:pipeline"
+    depends_on:
+      - pipeline
+    # Only start this with `docker compose --profile dave2 up` for 5B/5D
+    # runs; leave it out for 5A/5C. See scripts/run_step5.sh.
+    profiles: ["dave2"]
+    restart: "no"
