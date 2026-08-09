@@ -1,7 +1,6 @@
 SCRIPTS=(
     "3_generate_simulation_data/3A_transform_coordinates_to_carla.py"
     "3_generate_simulation_data/3B_transform_parked_vehicles_to_carla.py"
-    "3_generate_simulation_data/3C_setup_carla.py"
     "3_generate_simulation_data/3F_generate_carla_scenario.py"
 )
 
