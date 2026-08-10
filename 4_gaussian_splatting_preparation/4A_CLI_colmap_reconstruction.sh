@@ -39,6 +39,15 @@ CAMERA_PARAMS="785.34926249,784.07587341,406.50794975,249.45341029,-0.42020115,0
 
 SEQUENTIAL_OVERLAP=10
 
+# GPU-based SIFT (feature extraction/matching) needs a working Qt/OpenGL
+# context. In this headless container setup that's unreliable across
+# machines: if DISPLAY is unset, COLMAP falls back to CPU gracefully with
+# just warnings (seen on lambda-11037); if DISPLAY is set but unreachable
+# (e.g. an ssh -X session forwarding to a proxy the container's network
+# namespace can't reach - seen on soc006), Qt hard-crashes instead of
+# falling back. Disabling GPU SIFT entirely avoids this class of failure
+# on any machine, at the cost of slower feature extraction/matching than
+# GPU SIFT would give.
 DATA_ROOT="data/data_for_gaussian_splatting/${BAG_NAME}"
 COLMAP_ROOT="${DATA_ROOT}/colmap"
 
@@ -89,12 +98,14 @@ for N in $(seq 1 "$NUM_SPLITS"); do
         --ImageReader.camera_model "$CAMERA_MODEL" \
         --ImageReader.single_camera 1 \
         --ImageReader.camera_params "$CAMERA_PARAMS" \
+        --SiftExtraction.use_gpu 0 \
         "${MASK_ARGS[@]}"
 
     log "Sequential matching (overlap=${SEQUENTIAL_OVERLAP})..."
     colmap sequential_matcher \
         --database_path "$DB_PATH" \
-        --SequentialMatching.overlap "$SEQUENTIAL_OVERLAP"
+        --SequentialMatching.overlap "$SEQUENTIAL_OVERLAP" \
+        --SiftMatching.use_gpu 0
 
     log "Reconstruction (intrinsics refinement disabled)..."
     mkdir -p "$SPARSE_DIR"
